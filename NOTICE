@@ -1,0 +1,9 @@
+Tire Health Service
+Copyright 2026 maninblack
+Licensed under Apache-2.0.
+
+Strict JSON, SHA-256, UUID-v5, POSIX transport, KAC bootstrap and TLS adapter
+structure are adapted from Brake Health Service revision 6fb8e02 under Apache-2.0.
+No Brake product state, model, identity or endpoint is reused.
+The Tire model, messages and durable state are independent implementations of
+AosEdge SDV Demo D4-018/D4-019 and the accepted runtime-input contract.
