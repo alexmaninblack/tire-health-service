@@ -169,11 +169,13 @@ HttpResponse parse_http_response(const std::string& bytes) {
     }
     return response;
 }
-HttpResponse post_backend(const std::string& bytes, const std::atomic<bool>& stop) {
+HttpResponse post_backend(const std::string& bytes, const std::atomic<bool>& stop, bool demo_mock) {
     if (bytes.empty() || bytes.size() > 16384) throw std::invalid_argument("MESSAGE_SIZE_INVALID");
     sockaddr_in address{}; address.sin_family = AF_INET; address.sin_port = htons(18092);
     if (::inet_pton(AF_INET, "10.0.0.1", &address.sin_addr) != 1) fail();
-    const auto request = "POST /api/v1/tire/messages HTTP/1.1\r\nHost: 10.0.0.1:18092\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " + std::to_string(bytes.size()) + "\r\n\r\n" + bytes;
+    const auto path = demo_mock ? "/api/v1/tire/demo-mock/messages" : "/api/v1/tire/messages";
+    const auto marker = demo_mock ? "X-Aos-Demo-Source: MOCK\r\n" : "";
+    const auto request = std::string("POST ") + path + " HTTP/1.1\r\nHost: 10.0.0.1:18092\r\nContent-Type: application/json\r\n" + marker + "Connection: close\r\nContent-Length: " + std::to_string(bytes.size()) + "\r\n\r\n" + bytes;
     return parse_http_response(exchange(AF_INET, reinterpret_cast<sockaddr*>(&address), sizeof(address), request, 24576, 10, stop));
 }
 }  // namespace tire_health::runtime
