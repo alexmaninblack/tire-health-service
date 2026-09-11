@@ -129,7 +129,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
                 invalid = true;
                 std::lock_guard<std::mutex> lock(context_mutex);
                 if (active) active->TryCancel();
-                    if (advisory_context) advisory_context->TryCancel();
+                if (advisory_context) advisory_context->TryCancel();
             }
             if (boot_milliseconds() - last_frame.load() > 250) {
                 try {
@@ -139,7 +139,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
                     invalid = true;
                     std::lock_guard<std::mutex> lock(context_mutex);
                     if (active) active->TryCancel();
-                if (advisory_context) advisory_context->TryCancel();
+                    if (advisory_context) advisory_context->TryCancel();
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

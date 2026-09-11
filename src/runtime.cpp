@@ -13,7 +13,8 @@ ModelState read_model(const Json& value) {
  ModelState state;if(std::holds_alternative<std::nullptr_t>(value.value))return state;
  state.band=parse_band(value.at("conditionBand").string());state.better=value.at("betterBandCandidate").string()=="NONE"?Band::NotEvaluated:parse_band(value.at("betterBandCandidate").string());
  state.score=static_cast<int>(value.at("conditionScore").integer());state.confidence=static_cast<int>(value.at("confidencePercent").integer());state.better_count=static_cast<int>(value.at("betterBandEpisodeCount").integer());state.last_source=value.at("lastAppliedSourceExerciseId").string();state.last_assessment=value.at("lastAssessmentId").string();
- for(const auto& id:std::get<Json::Array>(value.at("recentSourceExerciseIds").value))state.recent.push_back(id.string());return state;
+ for(const auto& id:std::get<Json::Array>(value.at("recentSourceExerciseIds").value))state.recent.push_back(id.string());
+ return state;
 }
 Json write_model(const ModelState& m,const std::string& digest,const Json& state) {
  Json::Array recent;for(const auto& id:m.recent)recent.push_back(s(id));

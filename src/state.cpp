@@ -48,14 +48,17 @@ StateStore::StateStore(std::filesystem::path state,std::filesystem::path outbox,
  directory(root_);directory(outbox_);
  for(const auto& item:std::filesystem::directory_iterator(root_)) {
   const auto name=item.path().filename().string();
-  if(name!="state.json"&&name!="state.sha256"&&name!="transaction.json"&&name!="commit.sha256")throw std::runtime_error("NOT_READY_STATE");private_file(item.path());
+  if(name!="state.json"&&name!="state.sha256"&&name!="transaction.json"&&name!="commit.sha256")throw std::runtime_error("NOT_READY_STATE");
+  private_file(item.path());
  }
  if(std::filesystem::exists(root_/"transaction.json")) {
   const auto txn=parse_json(read_file(root_/"transaction.json",196608),196608);replay(txn);remove_durable(root_/"transaction.json");
  }
  if(std::filesystem::exists(root_/"state.json"))state_=parse_json(read_file(root_/"state.json",131072),131072);
  else {if(!std::filesystem::is_empty(outbox_))throw std::runtime_error("NOT_READY_STATE");state_=initial(uid_);durable_file(root_/"state.json",canonical(state_));durable_file(root_/"state.sha256",sha256_hex(canonical(state_)));}
- if(read_file(root_/"state.sha256",64)!=sha256_hex(canonical(state_)))throw std::runtime_error("NOT_READY_STATE");validate_state(state_);validate_queue();
+ if(read_file(root_/"state.sha256",64)!=sha256_hex(canonical(state_)))throw std::runtime_error("NOT_READY_STATE");
+ validate_state(state_);
+ validate_queue();
 }
 void StateStore::validate_state(const Json& value) const {
  if(value.object().count("lastRequestMetadata")) {
@@ -80,7 +83,8 @@ void StateStore::validate_state(const Json& value) const {
   if(!is_uuid(model.at("lastAppliedSourceExerciseId").string())||!is_uuid(model.at("lastAssessmentId").string())||model.at("nextAdvisorySequence").integer()!=value.at("nextAdvisorySequence").integer())throw std::runtime_error("NOT_READY_STATE");
   const auto count=model.at("betterBandEpisodeCount").integer();if(count<0||count>3)throw std::runtime_error("NOT_READY_STATE");
   const auto& recent=std::get<Json::Array>(model.at("recentSourceExerciseIds").value);std::set<std::string> unique;
-  if(recent.size()>128)throw std::runtime_error("NOT_READY_STATE");for(const auto& id:recent)if(!is_uuid(id.string())||!unique.insert(id.string()).second)throw std::runtime_error("NOT_READY_STATE");
+  if(recent.size()>128)throw std::runtime_error("NOT_READY_STATE");
+  for(const auto& id:recent)if(!is_uuid(id.string())||!unique.insert(id.string()).second)throw std::runtime_error("NOT_READY_STATE");
  }
 }
 void StateStore::validate_queue() const {
@@ -116,11 +120,13 @@ bool StateStore::commit(Json next,const std::vector<Json>& messages) {
 std::size_t StateStore::queued() const {std::size_t result=0;for(const auto& f:std::filesystem::directory_iterator(outbox_))if(f.path().extension()==".json")++result;return result;}
 std::optional<Pending> StateStore::pending() const {
  std::vector<std::filesystem::path> files;for(const auto& f:std::filesystem::directory_iterator(outbox_))if(f.path().extension()==".json")files.push_back(f.path());std::sort(files.begin(),files.end());
- for(const auto& file:files){const auto key=file.stem().string();if(!std::filesystem::exists(outbox_/(key+".blocked")))return Pending{key,read_file(file,16384)};}return std::nullopt;
+ for(const auto& file:files){const auto key=file.stem().string();if(!std::filesystem::exists(outbox_/(key+".blocked")))return Pending{key,read_file(file,16384)};}
+ return std::nullopt;
 }
 bool StateStore::acknowledge(const Pending& pending,const HttpResponse& response) {
  const auto path=outbox_/(pending.key+".json");if(!is_sha256(pending.key)||!std::filesystem::exists(path)||read_file(path,16384)!=pending.bytes)throw std::runtime_error("OUTBOX_RECORD_MISMATCH");
  if(matches_ack(pending.bytes,response)){remove_durable(path);return true;}
- if(response.status!=0&&response.status!=200&&response.status!=201&&!retryable_http(response.status))durable_file(outbox_/(pending.key+".blocked"),"DELIVERY_CONFLICT");return false;
+ if(response.status!=0&&response.status!=200&&response.status!=201&&!retryable_http(response.status))durable_file(outbox_/(pending.key+".blocked"),"DELIVERY_CONFLICT");
+ return false;
 }
 } // namespace tire_health

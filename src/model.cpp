@@ -78,7 +78,8 @@ Json event_message(const Json& a) {
 Json advisory_request(const Metadata& m,const std::string& epoch,std::int64_t sequence,const std::string& decision,Band band,std::int64_t now) {
  if(!is_uuid(epoch)||!is_uuid(decision)||sequence<1||band==Band::NotEvaluated)throw std::invalid_argument("ADVISORY_INVALID");
  Json::Object r{{"schemaVersion",number(1)},{"requestId",text(uuid_v5(epoch,{std::to_string(sequence)}))},{"producerEpoch",text(epoch)},{"sequence",number(sequence)},{"decisionId",text(decision)},{"serviceVersion",text(m.service_version)},{"modelVersion",text("1.0.0")},{"issuedAt",text(utc_timestamp(now))},{"expiresAt",text(utc_timestamp(now+30000))},{"operation",text(band==Band::Good?"CLEAR":"SET")},{"reasonCode",text(band==Band::Good?"CONDITION_CLEARED":"PREDICTED_TIRE_WEAR")}};
- if(band!=Band::Good)r["recommendation"]=text(band==Band::Inspection?"TIRE_INSPECTION_RECOMMENDED":"TIRE_REPLACEMENT_RECOMMENDED");return Json{r};
+ if(band!=Band::Good)r["recommendation"]=text(band==Band::Inspection?"TIRE_INSPECTION_RECOMMENDED":"TIRE_REPLACEMENT_RECOMMENDED");
+ return Json{r};
 }
 Json advisory_fact(const Metadata& m,const Json& request,const Json& status,std::int64_t now) {
  if(m.service_version!=request.at("serviceVersion").string())throw std::invalid_argument("ADVISORY_PROVENANCE_INVALID");
@@ -94,6 +95,7 @@ Json advisory_fact(const Metadata& m,const Json& request,const Json& status,std:
  if((recommendation!="NONE" && recommendation!="TIRE_INSPECTION_RECOMMENDED" && recommendation!="TIRE_REPLACEMENT_RECOMMENDED") || (reason!="NONE" && reason!="PREDICTED_TIRE_WEAR"))throw std::invalid_argument("STATUS_WRONG_PRODUCT");
  auto msg=base(m,"TIRE_ADVISORY_FACT");for(const auto* f:{"requestId","producerEpoch","sequence"})msg[f]=request.at(f);msg["gatewayState"]=text(state);msg["recordedAt"]=text(utc_timestamp(now));
  Json::Object content{{"assessmentId",request.at("decisionId")},{"operation",request.at("operation")},{"reasonCode",request.at("reasonCode")},{"issuedAt",request.at("issuedAt")},{"expiresAt",request.at("expiresAt")},{"gatewayReason",status.at("reason")},{"gatewayObservedAt",status.at("gatewayObservedAt")},{"activeRecommendation",status.at("activeRecommendation")},{"activeReasonCode",status.at("activeReasonCode")},{"activeUntil",status.at("activeUntil")}};
- if(request.object().count("recommendation"))content["recommendation"]=request.at("recommendation");return wrap(msg,Json{content});
+ if(request.object().count("recommendation"))content["recommendation"]=request.at("recommendation");
+ return wrap(msg,Json{content});
 }
 } // namespace tire_health

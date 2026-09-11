@@ -100,13 +100,19 @@ std::string canonical(const Json& json) {
     }
     if (const auto* v=std::get_if<std::string>(&json.value)) return quote_json(*v);
     if (const auto* v=std::get_if<Json::Array>(&json.value)) {
-        std::string result="["; for (const auto& item:*v) {if(result.size()>1)result+=','; result+=canonical(item);} return result+']';
+        std::string result="[";
+        for (const auto& item:*v) {
+            if(result.size()>1)result+=',';
+            result+=canonical(item);
+        }
+        return result+']';
     }
     if (const auto* v=std::get_if<Json::Object>(&json.value)) {
         std::string result="{"; for (const auto& [key,item]:*v) {
             // Tire's closed schemas use ASCII property names and integer fields.
             if (!std::all_of(key.begin(),key.end(),[](unsigned char c){return c<128;})) throw std::invalid_argument("NON_SCHEMA_KEY");
-            if(result.size()>1)result+=','; result+=quote_json(key)+':'+canonical(item);
+            if(result.size()>1)result+=',';
+            result+=quote_json(key)+':'+canonical(item);
         } return result+'}';
     }
     throw std::invalid_argument("NON_SCHEMA_NUMBER");
