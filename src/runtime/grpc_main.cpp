@@ -108,7 +108,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     const auto metadata_bytes = read_file(inputs.metadata_file, 8192);
     runtime.update_vdp_metadata(parse_metadata(metadata_bytes));
     const auto ca = read_file(inputs.ca_file, 65536);
-    const auto token = read_private_token(token_path);
+    const auto token = read_private_token(token_file_from_environment());
     grpc::SslCredentialsOptions tls; tls.pem_root_certs = ca;
     grpc::ChannelArguments arguments;
     arguments.SetMaxReceiveMessageSize(65536);
@@ -122,7 +122,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
         while (!finished) {
             bool cancel = stop || interrupted;
             try {
-                cancel = cancel || read_private_token(token_path) != token || read_file(inputs.metadata_file, 8192) != metadata_bytes ||
+                cancel = cancel || read_private_token(token_file_from_environment()) != token || read_file(inputs.metadata_file, 8192) != metadata_bytes ||
                          read_file(inputs.ca_file, 65536) != ca;
             } catch (...) { cancel = true; }
             if (cancel) {
@@ -234,8 +234,8 @@ int main(int argc, char** argv) {
     Log log;
     try {
         const auto inputs = parse_arguments(argc, argv);
-        const char* token_file = std::getenv("KUKSA_TOKEN_FILE");
-        if (std::getenv("AOS_SECRET") || !token_file || std::string(token_file) != token_path) throw std::runtime_error("CREDENTIAL_BOUNDARY_INVALID");
+        if (std::getenv("AOS_SECRET")) throw std::runtime_error("CREDENTIAL_BOUNDARY_INVALID");
+        (void)token_file_from_environment();
         const auto metadata = parse_metadata(read_file(inputs.metadata_file, 8192));
         Runtime runtime("/storage/tire-health/state/v1","/storage/tire-health/outbox/v1", metadata);
         std::signal(SIGINT, signal_handler); std::signal(SIGTERM, signal_handler);

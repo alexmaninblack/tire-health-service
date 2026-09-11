@@ -43,11 +43,14 @@ or advisory bypasses the gate.
 
 Bootstrap starts `/usr/bin/tire-health-service` with those arguments. Only
 bootstrap consumes `AOS_SECRET`; it removes the variable before starting the
-child. Analytics receives only `KUKSA_TOKEN_FILE`, fixed at
-`/run/aosedge/secrets/kuksa/token.jwt`. Its private tmpfs parent must exist,
-belong to the service user, and be `0700`; tokens are replaced atomically as
-`0400`, renewed at 180 seconds and invalidated at 300 seconds. No secret,
-token or private key belongs in state/messages/logs.
+child. Bootstrap creates a fresh private 0700 session under the per-container
+1777 tmpfs. Analytics receives only the KUKSA_TOKEN_FILE path at
+`/run/aosedge/secrets/kuksa/session-<random>/token.jwt`. Tokens are regular
+0400 files, renewed at 180 seconds and invalidated at 300 seconds. Parent/leaf
+symlinks, hard links and wrong ownership/modes are rejected. Normal exit
+removes only its own session. Restart never adopts a token. Eight session
+entries bounds crash orphans; exhaustion fails without deleting a peer
+session. Container destruction clears the tmpfs. No secret enters state or logs.
 
 Named resources: `kuksa`, `kuksa-auth-client`, `tire-runtime-inputs`.
 Demo Control projects exactly `metadata.json` and public `kuksa-ca.pem` from
@@ -55,7 +58,12 @@ Demo Control projects exactly `metadata.json` and public `kuksa-ca.pem` from
 `/run/aosedge/platform/service-inputs`, read-only with
 `nosuid,nodev,noexec`. Never mount a shared parent or Brake resource directory.
 
-Metadata has exactly seven keys: `schemaVersion`, `unitSystemUid`, `unitRole`,
+Private-session source implements
+[ADR 0015](../aosedge-sdv-demo/docs/architecture/decisions/0015-use-native-aos-service-runtime-inputs.md)
+without an SM patch and passes host tests. Package/provenance migration and
+live proof remain pending; do not publish this partially migrated runtime.
+
+The **legacy reader, not the target contract**, has exactly seven keys: `schemaVersion`, `unitSystemUid`, `unitRole`,
 `serviceVersion`, `serviceArtifactSha256`, `vdpContractVersion`,
 `vdpContractSha256`. Input role is `validation` or `production`, upper-case on
 messages. Versions are canonical `X.Y.Z`, max 32 characters, no leading zeros.
