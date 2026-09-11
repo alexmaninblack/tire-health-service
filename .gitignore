@@ -9,3 +9,4 @@ build/
 *.key
 *.jwt
 .DS_Store
+__pycache__/

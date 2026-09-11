@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 maninblack
+# SPDX-License-Identifier: Apache-2.0
+*
+!CMakeLists.txt
+!Dockerfile
+!.dockerignore
+!cmake/
+!cmake/**
+!include/
+!include/**
+!src/
+!src/**
+!tests/
+!tests/*.cpp
+!tests/test_product_export.py
+!tools/
+!tools/build_product.py
+!DEPENDENCIES.json
+!LICENSE
+!NOTICE
+!THIRD_PARTY_NOTICES.md
+**/*.pem
+**/*.key
+**/*.jwt
+**/*.p12
+**/service-release.json
+**/metadata.json

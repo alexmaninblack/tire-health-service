@@ -7,3 +7,7 @@ structure are adapted from Brake Health Service revision 6fb8e02 under Apache-2.
 No Brake product state, model, identity or endpoint is reused.
 The Tire model, messages and durable state are independent implementations of
 AosEdge SDV Demo D4-018/D4-019 and the accepted runtime-input contract.
+
+Product Docker/export and parser-test structure is adapted from Brake Health
+Service under Apache-2.0, with Tire-only executable and suite identities,
+fixed functional profile v1 and no diagnostic scaffold mode.

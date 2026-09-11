@@ -120,9 +120,18 @@ Default builds are host/domain/bootstrap only. Product builds must explicitly
 set `THS_BUILD_KUKSA_RUNTIME=ON`, supply a Linux ARM64 toolchain/sysroot,
 gRPC **1.60.1**, Protobuf **25.8.0**, and `THS_KUKSA_SOURCE_ROOT` at commit
 `30e5c13abc496d0b39aaa6c25acebb088b9902e3`. CMake checks VAL file hashes and
-rejects modifications; it downloads nothing. Install prefix `/usr` packages
-both executables and their actual dynamic-library closure. Missing product
-dependencies fail the build, never substitute a diagnostic binary.
+rejects modifications; it downloads nothing. Install prefix `/usr` stages
+both executables. The preparation-only Docker recipe and
+[product exporter](docs/product-build.md) close static third-party linkage,
+verify the actual glibc-only ARM64 dependency boundary, preserve public
+licenses and require all three successful CTest suites. Missing dependencies
+fail the build; there is no diagnostic binary or placeholder product hash.
+
+Actual builds remain exclusively owned by Demo Control:
+`democtl service build tire --content-profile v1`. Tire has only fixed content
+profile `v1`; release allocation remains a later package-preparation action.
+The recipe changes no native container launch, recovery or startup behavior.
+Source/host tests do not establish an ARM64 export or live qualification.
 
 `tire_health_tests --emit-conformance` emits four synthetic message kinds for
 legacy offline validation. `--emit-native-conformance` emits actual revision-2
