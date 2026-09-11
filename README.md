@@ -3,6 +3,21 @@
 
 # Tire Health service — source integration candidate
 
+## Temporary Test-only lifecycle mode
+
+The explicit final bootstrap argument `--demo-no-telemetry` is a temporary
+Cloud-permissions workaround accepted on 11 September 2026. It validates native
+identity, packaged version and public metadata, rejects Production, and keeps
+only the bootstrap alive until SIGTERM/SIGINT. It does not start analytics,
+request a token, connect to KUKSA, emit derived records or produce advisory.
+Its single lifecycle event reports `NOT_READY / TELEMETRY_DISABLED`.
+It is never selected automatically when authorization fails.
+
+Build, package and publish through Demo Control. Preparation requires both
+`--without-permissions --demo-no-telemetry`; this explicit package mode also
+requests `noFileLimit: 1024` for native container construction. Normal bootstrap
+authorization and normal package contracts remain unchanged.
+
 Independent Function Team 2 C++17 service for the AosEdge SDV demo. This is not
 a production diagnostic or a qualified P7 artifact. It does not infer tread
 depth, useful life or simulator oracle state.
