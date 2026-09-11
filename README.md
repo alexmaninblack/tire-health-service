@@ -60,18 +60,31 @@ Demo Control projects exactly `metadata.json` and public `kuksa-ca.pem` from
 
 Private-session source implements
 [ADR 0015](../aosedge-sdv-demo/docs/architecture/decisions/0015-use-native-aos-service-runtime-inputs.md)
-without an SM patch and passes host tests. Package/provenance migration and
-live proof remain pending; do not publish this partially migrated runtime.
+without an SM patch. Native input readers and all four revision-2 product
+message kinds now pass host tests and offline backend conformance. Package
+assembly/public projection, boot ordering and ARM64/live proof remain pending;
+do not publish this source checkpoint as a qualified runtime.
 
-The **legacy reader, not the target contract**, has exactly seven keys: `schemaVersion`, `unitSystemUid`, `unitRole`,
-`serviceVersion`, `serviceArtifactSha256`, `vdpContractVersion`,
-`vdpContractSha256`. Input role is `validation` or `production`, upper-case on
-messages. Versions are canonical `X.Y.Z`, max 32 characters, no leading zeros.
-Service digest identifies the ARM64 OCI manifest, not a transport archive or
-Cloud bundle. The VDP pair comes from the committed capability contract, not
-the Cloud release or functional VDP_V3 label. Do not bake a Unit UID into a
-reusable package. Input/CA/token replacement reconnects KUKSA; VDP pair change
-aborts the old episode. UID/role/service identity change is rejected.
+The public reader accepts exactly five keys: `schemaVersion: 2`,
+`unitSystemUid`, `unitRole`, `vdpContractVersion` and
+`vdpContractSha256`. Role is lower-case on input and upper-case in messages.
+Both entry points read `/usr/share/aosedge/service-release.json`
+(`schemaVersion: 1`, `serviceVersion`) and the four standard Aos identity
+environment variables once at startup. Versions are strict `X.Y.Z`, max
+32 characters; neither package nor public input overrides native identity.
+Products use revision 2 / 2.0.0 with `serviceInstance`, without an OCI digest.
+The VDP pair still identifies the committed compatibility contract.
+
+Queued messages remain byte-identical across restart/update. New requests
+persist their original metadata as `lastRequestMetadata` in the existing
+private wrapper state, independently of the unchanged 13-field model state.
+The reader accepts old eight-field wrapper state and new bound state; no new
+store, epoch rotation or state deletion is introduced. A legacy request without
+a saved binding cannot produce a fact using current metadata. Its stored bytes
+remain intact, and normal advisory refresh uses the next sequence in the same
+epoch to create a bound request. Request/GatewayStatus wire revision stays 1.
+Input/CA/token replacement reconnects KUKSA; VDP pair change aborts the old
+episode. UID/role/service/native-instance change is rejected in-process.
 
 KUKSA uses TLS at `Server:55555`; KAC uses
 `/run/aosedge/platform/kuksa-auth/request.sock`. The exact 15 paths are in
@@ -112,7 +125,10 @@ both executables and their actual dynamic-library closure. Missing product
 dependencies fail the build, never substitute a diagnostic binary.
 
 `tire_health_tests --emit-conformance` emits four synthetic message kinds for
-offline validation against Tire Cloud's packaged schemas. This test binary is not
+legacy offline validation. `--emit-native-conformance` emits actual revision-2
+output; `node tests/native_backend_conformance.mjs <test-binary> <backend-checkout>`
+checks all four kinds, exact retry receipts and queries in an in-memory store.
+This test binary is not
 installed and must not be put into the service image.
 
 ## Explicit remaining gates

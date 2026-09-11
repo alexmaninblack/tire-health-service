@@ -106,7 +106,7 @@ void deliver(Runtime& runtime, std::atomic<bool>& stop, Log& log) {
 // Token loss/change cancels the subscription, including a stalled Get/Read.
 void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bool>& stop, Log& log) {
     const auto metadata_bytes = read_file(inputs.metadata_file, 8192);
-    runtime.update_vdp_metadata(parse_metadata(metadata_bytes));
+    runtime.update_vdp_metadata(runtime_metadata(inputs, metadata_bytes));
     const auto ca = read_file(inputs.ca_file, 65536);
     const auto token = read_private_token(token_file_from_environment());
     grpc::SslCredentialsOptions tls; tls.pem_root_certs = ca;
@@ -233,10 +233,11 @@ int main(int argc, char** argv) {
     std::atomic<bool> stop{false};
     Log log;
     try {
-        const auto inputs = parse_arguments(argc, argv);
+        auto inputs = parse_arguments(argc, argv);
+        initialize_service_inputs(inputs);
         if (std::getenv("AOS_SECRET")) throw std::runtime_error("CREDENTIAL_BOUNDARY_INVALID");
         (void)token_file_from_environment();
-        const auto metadata = parse_metadata(read_file(inputs.metadata_file, 8192));
+        const auto metadata = runtime_metadata(inputs, read_file(inputs.metadata_file, 8192));
         Runtime runtime("/storage/tire-health/state/v1","/storage/tire-health/outbox/v1", metadata);
         std::signal(SIGINT, signal_handler); std::signal(SIGTERM, signal_handler);
         std::thread delivery([&] { deliver(runtime, stop, log); });

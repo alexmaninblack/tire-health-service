@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 maninblack
 // SPDX-License-Identifier: Apache-2.0
 #include "tire_health/state.hpp"
+#include "tire_health/runtime/application.hpp"
 #include "tire_health/runtime/sha256.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -57,9 +58,15 @@ StateStore::StateStore(std::filesystem::path state,std::filesystem::path outbox,
  if(read_file(root_/"state.sha256",64)!=sha256_hex(canonical(state_)))throw std::runtime_error("NOT_READY_STATE");validate_state(state_);validate_queue();
 }
 void StateStore::validate_state(const Json& value) const {
+ if(value.object().count("lastRequestMetadata")) {
+  const auto metadata=parse_metadata_binding(value.at("lastRequestMetadata"));
+  const auto& request=value.at("lastRequest");
+  if(std::holds_alternative<std::nullptr_t>(request.value) || metadata.unit_system_uid!=uid_ ||
+     metadata.service_version!=request.at("serviceVersion").string())throw std::runtime_error("NOT_READY_STATE");
+ }
  const auto& states=std::get<Json::Array>(value.at("gatewayStates").value);std::set<std::string> statuses;
  for(const auto& item:states){const auto v=item.string();if(v!="RECEIVED"&&v!="APPLIED"&&v!="CLEARED"&&v!="REJECTED"&&v!="EXPIRED"&&v!="FAILED")throw std::runtime_error("NOT_READY_STATE");if(!statuses.insert(v).second)throw std::runtime_error("NOT_READY_STATE");}
- if(value.object().size()!=8 || value.at("schemaVersion").integer()!=1 || value.at("unitSystemUid").string()!=uid_ || !is_uuid(value.at("producerEpoch").string()) || value.at("nextAdvisorySequence").integer()<1 || value.at("lastPublishedAt").integer()<0 || canonical(value).size()>131072)throw std::runtime_error("NOT_READY_STATE");
+ if(value.object().size()!=(value.object().count("lastRequestMetadata")?9U:8U) || value.at("schemaVersion").integer()!=1 || value.at("unitSystemUid").string()!=uid_ || !is_uuid(value.at("producerEpoch").string()) || value.at("nextAdvisorySequence").integer()<1 || value.at("lastPublishedAt").integer()<0 || canonical(value).size()>131072)throw std::runtime_error("NOT_READY_STATE");
  if(!std::holds_alternative<std::nullptr_t>(value.at("lastRequest").value)) {
   const auto& request=value.at("lastRequest");
   if(request.at("producerEpoch").string()!=value.at("producerEpoch").string() || request.at("sequence").integer()>=value.at("nextAdvisorySequence").integer())throw std::runtime_error("NOT_READY_STATE");

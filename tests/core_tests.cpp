@@ -12,7 +12,15 @@ using namespace tire_health;
 using namespace tire_health::runtime;
 namespace {
 template<typename F>void rejects(F operation){bool failed=false;try{operation();}catch(...){failed=true;}assert(failed);}
-Metadata metadata(){return {"test-fixture-unit","VALIDATION","21.0.0",std::string(64,'a'),"1.0.1",std::string(64,'b')};}
+bool native_fixture=false;
+Metadata metadata(){
+ if(native_fixture) {
+  const auto inputs=parse_service_inputs(R"({"schemaVersion":1,"serviceVersion":"21.0.0"})",
+   {{"AOS_ITEM_ID","tire-service"},{"AOS_SUBJECT_ID","group-subject"},{"AOS_INSTANCE_INDEX","0"},{"AOS_INSTANCE_ID","tire-instance"}});
+  return parse_metadata(std::string(R"({"schemaVersion":2,"unitSystemUid":"test-fixture-unit","unitRole":"validation","vdpContractVersion":"1.0.1","vdpContractSha256":")")+std::string(64,'b')+"\"}",inputs);
+ }
+ return {"test-fixture-unit","VALIDATION","21.0.0",std::string(64,'a'),"1.0.1",std::string(64,'b')};
+}
 struct Temp {std::filesystem::path root;Temp(){char path[]="/tmp/tire-native-XXXXXX";const auto* created=::mkdtemp(path);assert(created);root=created;}~Temp(){std::filesystem::remove_all(root);}};
 Episode episode(std::int64_t end=1788000000000LL){Episode e{random_uuid(),end-3000,end,{},"COMPLETE"};e.samples.resize(30);return e;}
 Json message(){ModelState state;const auto e=episode();const auto result=assess(state,{7000,6000,5000,5500},30,e.id);assert(result);return assessment_message(metadata(),state,*result,e,std::string(64,'c'));}
@@ -22,8 +30,8 @@ void protocol_tests(){
  assert(uuid_v5("6ba7b810-9dad-11d1-80b4-00c04fd430c8",{"www.widgets.com"})=="21f7f8de-8051-5b89-8680-0195ef798b6a");
  rejects([]{parse_json("{\"x\":1,\"x\":2}");});rejects([]{parse_json("{\"x\":NaN}");});
  const auto m=metadata();const auto text="{\"schemaVersion\":1,\"unitSystemUid\":\"test-fixture-unit\",\"unitRole\":\"validation\",\"serviceVersion\":\"21.0.0\",\"serviceArtifactSha256\":\""+m.service_artifact_sha256+"\",\"vdpContractVersion\":\"1.0.1\",\"vdpContractSha256\":\""+m.vdp_contract_sha256+"\"}";
- assert(parse_metadata(text).unit_role=="VALIDATION");rejects([&]{parse_metadata(text.substr(0,text.size()-1)+",\"unknown\":1}");});
- for(const auto* invalid:{"021.0.0","21.0.0-beta","21.0.0+build","999999999999999999999999999999.0.0"}) {auto changed=text;changed.replace(changed.find("21.0.0"),6,invalid);rejects([&]{parse_metadata(changed);});}
+ assert(parse_legacy_metadata(text).unit_role=="VALIDATION");rejects([&]{parse_legacy_metadata(text.substr(0,text.size()-1)+",\"unknown\":1}");});
+ for(const auto* invalid:{"021.0.0","21.0.0-beta","21.0.0+build","999999999999999999999999999999.0.0"}) {auto changed=text;changed.replace(changed.find("21.0.0"),6,invalid);rejects([&]{parse_legacy_metadata(changed);});}
  assert(retry_delay(0,0)==1&&retry_delay(10,0)==30&&retry_delay(0,0,60)==60);
  assert(parse_credential("{\"protocol\":\"aos-kuksa-auth-compat/v1\",\"status\":\"rejected\",\"correlationId\":\"fixture\",\"code\":\"DENIED\",\"retryable\":false}\n",1000).retryable==false);
  Lease lease;lease.issued(Credential{"",1300,1180,"",false},1000,10000);assert(!lease.expired(999,309999));assert(lease.expired(999,310000));
@@ -95,6 +103,60 @@ void corruption_capacity_tests(){
  auto broken=store.state().object();broken["producerEpoch"]=Json{random_uuid()};durable_file(t.root/"state"/"state.json",canonical(Json{broken}));
  Runtime rejected(t.root/"state",t.root/"outbox",metadata());assert(!rejected.state_ready());assert(!rejected.next_message());
 }
+
+void bound_request_recovery_tests() {
+ for(const bool previous_native:{false,true}) {
+  Temp t;native_fixture=previous_native;
+  const auto old=metadata();Json request;std::string retained;
+  const auto e=episode();
+  {
+   Runtime runtime(t.root/"state",t.root/"outbox",old);
+   assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
+   request=parse_json(*runtime.next_advisory(e.ended));
+   retained=runtime.next_message()->bytes;
+  }
+  native_fixture=true;auto current=metadata();current.service_version="22.0.0";current.service_instance->instance_id="new-instance";
+  Runtime runtime(t.root/"state",t.root/"outbox",current);
+  assert(runtime.state_ready() && runtime.next_message()->bytes==retained);
+  const Json status{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"requestId",request.at("requestId")},{"producerEpoch",request.at("producerEpoch")},{"sequence",request.at("sequence")},{"state",Json{std::string("APPLIED")}},{"reason",Json{std::string("NONE")}},{"gatewayObservedAt",Json{utc_timestamp(e.ended+1000)}},{"activeRecommendation",request.at("recommendation")},{"activeReasonCode",Json{std::string("PREDICTED_TIRE_WEAR")}},{"activeUntil",request.at("expiresAt")}}};
+  runtime.gateway_status(canonical(status),e.ended+1000);
+  unsigned count=0;bool fact_seen=false;
+  while(const auto pending=runtime.next_message()) {
+   const auto msg=parse_json(pending->bytes);
+   assert(msg.at("schemaVersion").integer()==(previous_native?2:1));
+   if(msg.object().count("serviceVersion"))assert(msg.at("serviceVersion").string()==old.service_version);
+   if(previous_native)assert(parse_service_instance(msg.at("serviceInstance"))==*old.service_instance);
+   if(msg.at("messageType").string()=="TIRE_ADVISORY_FACT")fact_seen=true;
+   assert(runtime.accept(*pending,ack(pending->bytes)));++count;
+  }
+  assert(fact_seen && count==3);
+  const auto next=parse_json(*runtime.next_advisory(e.ended+20000));
+  assert(next.at("serviceVersion").string()=="22.0.0");
+  assert(next.at("producerEpoch").string()==request.at("producerEpoch").string());
+  assert(next.at("sequence").integer()>request.at("sequence").integer());
+ }
+ // Historic wrapper state has no provenance binding: do not fabricate a fact.
+ Temp t;native_fixture=false;const auto e=episode();Json request;
+ {
+  Runtime runtime(t.root/"state",t.root/"outbox",metadata());
+  assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
+  request=parse_json(*runtime.next_advisory(e.ended));
+ }
+ {
+  StateStore store(t.root/"state",t.root/"outbox","test-fixture-unit");
+  auto state=store.state().object();state.erase("lastRequestMetadata");assert(store.commit(Json{state},{}));
+ }
+ native_fixture=true;
+ Runtime runtime(t.root/"state",t.root/"outbox",metadata());assert(runtime.state_ready());
+ const auto first=runtime.next_message()->bytes;
+ runtime.gateway_status("{}",e.ended+1); // Unbound legacy request has no reportable fact.
+ assert(runtime.next_message()->bytes==first);
+ const auto renewed=parse_json(*runtime.next_advisory(e.ended+20000));
+ assert(renewed.at("producerEpoch").string()==request.at("producerEpoch").string());
+ assert(renewed.at("sequence").integer()>request.at("sequence").integer());
+ native_fixture=false;
+}
+
 void emit_conformance(){
  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());const auto e=episode();
  assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
@@ -102,7 +164,7 @@ void emit_conformance(){
  const auto request=runtime.next_advisory(e.ended);assert(request);const auto r=parse_json(*request);
  const Json status{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"requestId",r.at("requestId")},{"producerEpoch",r.at("producerEpoch")},{"sequence",r.at("sequence")},{"state",Json{std::string("APPLIED")}},{"reason",Json{std::string("NONE")}},{"gatewayObservedAt",Json{utc_timestamp(e.ended+1000)}},{"activeRecommendation",r.at("recommendation")},{"activeReasonCode",Json{std::string("PREDICTED_TIRE_WEAR")}},{"activeUntil",r.at("expiresAt")}}};
  runtime.gateway_status(canonical(status),e.ended+1000);
- unsigned count=0;while(const auto pending=runtime.next_message()){std::cout<<pending->bytes<<'\n';assert(runtime.accept(*pending,ack(pending->bytes)));++count;}assert(count==4);
+ unsigned count=0;while(const auto pending=runtime.next_message()){if(native_fixture){const auto msg=parse_json(pending->bytes);assert(msg.at("schemaVersion").integer()==2 && !msg.object().count("serviceArtifactSha256") && !msg.object().count("modelArtifactSha256"));assert(parse_service_instance(msg.at("serviceInstance"))==*metadata().service_instance);}std::cout<<pending->bytes<<'\n';assert(runtime.accept(*pending,ack(pending->bytes)));++count;}assert(count==4);
 }
 }
-int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}
+int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 maninblack
 // SPDX-License-Identifier: Apache-2.0
 #include "tire_health/service.hpp"
+#include "tire_health/runtime/application.hpp"
 #include "tire_health/runtime/sha256.hpp"
 #include <algorithm>
 #include <stdexcept>
@@ -27,7 +28,7 @@ void Runtime::disconnect(){std::lock_guard<std::mutex> lock(mutex_);engine_.abor
 void Runtime::stop(){std::lock_guard<std::mutex> lock(mutex_);engine_.abort("ABORTED_SERVICE_STOP");}
 void Runtime::update_vdp_metadata(const Metadata& m) {
  std::lock_guard<std::mutex> lock(mutex_);
- if(m.unit_system_uid!=metadata_.unit_system_uid||m.unit_role!=metadata_.unit_role||m.service_version!=metadata_.service_version||m.service_artifact_sha256!=metadata_.service_artifact_sha256)throw std::invalid_argument("IMMUTABLE_IDENTITY_CHANGED");
+ if(m.unit_system_uid!=metadata_.unit_system_uid||m.unit_role!=metadata_.unit_role||m.service_version!=metadata_.service_version||m.service_artifact_sha256!=metadata_.service_artifact_sha256||m.service_instance!=metadata_.service_instance)throw std::invalid_argument("IMMUTABLE_IDENTITY_CHANGED");
  if(m.vdp_contract_version!=metadata_.vdp_contract_version||m.vdp_contract_sha256!=metadata_.vdp_contract_sha256){engine_.abort("INCOMPLETE_SOURCE_GAP");metadata_=m;}
 }
 void Runtime::function_status(const std::string& reason,std::int64_t now,const std::vector<std::string>& missing) {
@@ -40,6 +41,11 @@ void Runtime::function_status(const std::string& reason,std::int64_t now,const s
  const Json content{Json::Object{{"functionalState",s(reason=="READY"?"OPERATIONAL":degraded?"DEGRADED":"NOT_READY")},{"reason",s(reason)},{"requiredVdpContractVersion",s("3.0.0")},{"missingPaths",Json{paths_json}},{"missingCapabilities",Json{Json::Array{}}}}};
  const auto observed=utc_timestamp(now);
  Json::Object msg{{"schemaVersion",n(1)},{"contractVersion",s("1.0.0")},{"messageType",s("TIRE_FUNCTION_STATUS")},{"statusId",s(uuid_v5(store_->state().at("producerEpoch").string(),{observed,reason,metadata_.service_version,metadata_.vdp_contract_version,canonical(content)}))},{"unitSystemUid",s(metadata_.unit_system_uid)},{"unitRole",s(metadata_.unit_role)},{"serviceVersion",s(metadata_.service_version)},{"serviceArtifactSha256",s(metadata_.service_artifact_sha256)},{"actualVdpContractVersion",s(metadata_.vdp_contract_version)},{"actualVdpContractSha256",s(metadata_.vdp_contract_sha256)},{"observedAt",s(observed)},{"content",content},{"contentSha256",s(sha256_hex(canonical(content)))}};
+ if(metadata_.service_instance) {
+  (void)metadata_binding(metadata_);
+  msg["schemaVersion"]=n(2);msg["contractVersion"]=s("2.0.0");msg.erase("serviceArtifactSha256");
+  msg.emplace("serviceInstance",parse_json(service_instance_json(*metadata_.service_instance)));
+ }
  store_->commit(store_->state(),{Json{msg}});reason_=reason;status_at_=now;
 }
 std::optional<Pending> Runtime::next_message(){std::lock_guard<std::mutex> lock(mutex_);return store_?store_->pending():std::nullopt;}
@@ -57,6 +63,7 @@ bool Runtime::apply_episode(const Features& features,const Episode& episode,cons
  // performed until the new model and producer sequence are durable.
  if(result->changed && (result->current!=Band::Good || result->previous!=Band::NotEvaluated)) {
   const auto sequence=next.at("nextAdvisorySequence").integer();next["lastRequest"]=advisory_request(metadata_,next.at("producerEpoch").string(),sequence,model.last_assessment,model.band,episode.ended);
+  next["lastRequestMetadata"]=metadata_binding(metadata_);
   next["nextAdvisorySequence"]=n(sequence+1);next["model"]=write_model(model,model_digest,Json{next});next["gatewayStates"]=Json{Json::Array{}};advisory_sent_=false;refresh_at_=episode.ended;last_write_=-1;
  }
  return store_->commit(Json{next},messages);
@@ -68,12 +75,18 @@ std::optional<std::string> Runtime::next_advisory(std::int64_t now) {
  if(model.band==Band::Good && (advisory_sent_ || std::holds_alternative<std::nullptr_t>(next.at("lastRequest").value)))return std::nullopt;
  const auto sequence=next.at("nextAdvisorySequence").integer();
  const auto request=advisory_request(metadata_,next.at("producerEpoch").string(),sequence,model.last_assessment,model.band,now);
+ next["lastRequestMetadata"]=metadata_binding(metadata_);
  next["nextAdvisorySequence"]=n(sequence+1);next["lastRequest"]=request;next["gatewayStates"]=Json{Json::Array{}};next["model"].value=write_model(model,next.at("model").at("modelConfigSha256").string(),Json{next}).value;
  store_->commit(Json{next},{});refresh_at_=now;last_write_=now;advisory_sent_=false;return canonical(request);
 }
 void Runtime::gateway_status(const std::string& bytes,std::int64_t now) {
  std::lock_guard<std::mutex> lock(mutex_);if(!store_||std::holds_alternative<std::nullptr_t>(store_->state().at("lastRequest").value))return;
- const auto status=parse_json(bytes,4096),request=store_->state().at("lastRequest");const auto fact=advisory_fact(metadata_,request,status,now);
+ // Old state may contain a request without durable provenance. Retain it, but
+ // never invent a fact by attaching the current package/instance to that request.
+ // Normal next_advisory() creates a newly bound request using the same epoch.
+ if(!store_->state().object().count("lastRequestMetadata"))return;
+ const auto status=parse_json(bytes,4096),request=store_->state().at("lastRequest");
+ const auto fact=advisory_fact(parse_metadata_binding(store_->state().at("lastRequestMetadata")),request,status,now);
  auto next=store_->state().object();auto states=std::get<Json::Array>(next.at("gatewayStates").value);const auto current=status.at("state").string();
  if(std::any_of(states.begin(),states.end(),[&](const Json& v){return v.string()==current;}))return;
  states.push_back(s(current));next["gatewayStates"]=Json{states};store_->commit(Json{next},{fact});

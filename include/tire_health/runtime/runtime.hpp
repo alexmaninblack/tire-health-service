@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 maninblack
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
+#include "tire_health/service_identity.hpp"
 #include "tire_health/runtime/json.hpp"
 #include <array>
 #include <atomic>
@@ -14,6 +15,8 @@ namespace tire_health::runtime {
 struct Metadata {
   std::string unit_system_uid, unit_role, service_version, service_artifact_sha256;
   std::string vdp_contract_version, vdp_contract_sha256;
+    // Absent only for explicitly retained legacy records/golden fixtures.
+    std::optional<ServiceInstance> service_instance{};
 };
 inline constexpr std::array<const char*,15> paths = {
  "Vehicle.Speed", "Vehicle.Acceleration.Lateral", "Vehicle.Chassis.Axle.Row1.SteeringAngle",

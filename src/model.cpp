@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 maninblack
 // SPDX-License-Identifier: Apache-2.0
 #include "tire_health/model.hpp"
+#include "tire_health/runtime/application.hpp"
 #include "tire_health/runtime/sha256.hpp"
 #include <algorithm>
 #include <cmath>
@@ -12,9 +13,16 @@ Json number(std::int64_t n){return Json{n};}
 Json text(const std::string& s){return Json{s};}
 Json wrap(Json::Object message,Json content) {message["content"]=content;message["contentSha256"]=text(sha256_hex(canonical(content)));return Json{message};}
 Json::Object base(const Metadata& m,const std::string& type) {
- return {{"schemaVersion",number(1)},{"contractVersion",text("1.0.0")},{"messageType",text(type)},
+ Json::Object message{{"schemaVersion",number(1)},{"contractVersion",text("1.0.0")},{"messageType",text(type)},
  {"unitSystemUid",text(m.unit_system_uid)},{"unitRole",text(m.unit_role)},{"serviceVersion",text(m.service_version)},
  {"serviceArtifactSha256",text(m.service_artifact_sha256)},{"vdpContractVersion",text(m.vdp_contract_version)},{"vdpContractSha256",text(m.vdp_contract_sha256)}};
+ if(m.service_instance) {
+  (void)metadata_binding(m);
+  message["schemaVersion"]=number(2);message["contractVersion"]=text("2.0.0");
+  message.erase("serviceArtifactSha256");
+  message.emplace("serviceInstance",parse_json(service_instance_json(*m.service_instance)));
+ }
+ return message;
 }
 }
 const char* band_name(Band b) {switch(b){case Band::NotEvaluated:return "NOT_EVALUATED";case Band::Good:return "GOOD";case Band::Inspection:return "INSPECTION_RECOMMENDED";case Band::Replacement:return "REPLACEMENT_RECOMMENDED";}throw std::invalid_argument("BAND_INVALID");}
@@ -61,8 +69,11 @@ Json assessment_message(const Metadata& m,const ModelState&,const Assessment& a,
 }
 Json event_message(const Json& a) {
  const auto& c=a.at("content");const auto current=c.at("currentBand").string();
- return wrap({{"schemaVersion",number(1)},{"contractVersion",text("1.0.0")},{"messageType",text("TIRE_CONDITION_BAND_CHANGED")},{"assessmentId",a.at("assessmentId")},{"unitSystemUid",a.at("unitSystemUid")},{"sourceEventTime",a.at("sourceEventTime")},{"eventId",text(uuid_v5("330cfd3e-d785-51ba-8074-2cb57498b11e",{a.at("assessmentId").string(),"TIRE_CONDITION_BAND_CHANGED",current}))}},
- Json{Json::Object{{"eventType",text("TIRE_CONDITION_BAND_CHANGED")},{"previousBand",c.at("previousBand")},{"currentBand",c.at("currentBand")},{"conditionScore",c.at("conditionScore")},{"confidencePercent",c.at("confidencePercent")}}});
+ Json::Object message{{"schemaVersion",a.at("schemaVersion")},{"contractVersion",a.at("contractVersion")},{"messageType",text("TIRE_CONDITION_BAND_CHANGED")},{"assessmentId",a.at("assessmentId")},{"unitSystemUid",a.at("unitSystemUid")},{"sourceEventTime",a.at("sourceEventTime")},{"eventId",text(uuid_v5("330cfd3e-d785-51ba-8074-2cb57498b11e",{a.at("assessmentId").string(),"TIRE_CONDITION_BAND_CHANGED",current}))}};
+ if(a.at("schemaVersion").integer()==2) {
+  for(const auto* field:{"unitRole","serviceVersion","serviceInstance"})message[field]=a.at(field);
+ } else if(a.at("schemaVersion").integer()!=1)throw std::invalid_argument("MESSAGE_SCHEMA_INVALID");
+ return wrap(message, Json{Json::Object{{"eventType",text("TIRE_CONDITION_BAND_CHANGED")},{"previousBand",c.at("previousBand")},{"currentBand",c.at("currentBand")},{"conditionScore",c.at("conditionScore")},{"confidencePercent",c.at("confidencePercent")}}});
 }
 Json advisory_request(const Metadata& m,const std::string& epoch,std::int64_t sequence,const std::string& decision,Band band,std::int64_t now) {
  if(!is_uuid(epoch)||!is_uuid(decision)||sequence<1||band==Band::NotEvaluated)throw std::invalid_argument("ADVISORY_INVALID");
@@ -70,6 +81,7 @@ Json advisory_request(const Metadata& m,const std::string& epoch,std::int64_t se
  if(band!=Band::Good)r["recommendation"]=text(band==Band::Inspection?"TIRE_INSPECTION_RECOMMENDED":"TIRE_REPLACEMENT_RECOMMENDED");return Json{r};
 }
 Json advisory_fact(const Metadata& m,const Json& request,const Json& status,std::int64_t now) {
+ if(m.service_version!=request.at("serviceVersion").string())throw std::invalid_argument("ADVISORY_PROVENANCE_INVALID");
  for(const auto* field:{"requestId","producerEpoch","sequence"})if(canonical(request.at(field))!=canonical(status.at(field)))throw std::invalid_argument("UNCORRELATED_STATUS");
  if(status.object().size()!=10 || status.at("schemaVersion").integer()!=1)throw std::invalid_argument("STATUS_INVALID");
  const auto state=status.at("state").string(); const std::vector<std::string> states{"RECEIVED","APPLIED","CLEARED","REJECTED","EXPIRED","FAILED"};
