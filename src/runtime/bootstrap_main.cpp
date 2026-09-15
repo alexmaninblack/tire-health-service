@@ -21,10 +21,14 @@ namespace {
 volatile std::sig_atomic_t interrupted = 0;
 void signal_handler(int) { interrupted = 1; }
 using namespace tire_health::runtime;
-void auth_state(bool ready) {
+void auth_state(bool ready, const std::string& rejection = "KUKSA_AUTH_UNAVAILABLE") {
+    const auto reason = ready ? std::string("NONE") : rejection;
+    static std::string previous;
+    if (reason == previous) return;
+    previous = reason;
     std::cout << "{\"schemaVersion\":1,\"eventType\":\"KUKSA_CONNECTION_CHANGED\",\"severity\":\"INFO\",\"currentState\":\""
               << (ready ? "READY" : "NOT_READY") << "\",\"reasonCode\":\""
-              << (ready ? "NONE" : "KUKSA_AUTH_UNAVAILABLE") << "\"}" << std::endl;
+              << reason << "\"}" << std::endl;
 }
 
 void stop_child(pid_t child) {
@@ -99,6 +103,9 @@ int main(int argc, char** argv) {
                 } catch (...) { next_attempt = boot + retry_delay(failures++, jitter(random)) * 1000; }
                 if (received) {
                     const auto& credential = *received;
+                    // parse_credential accepts only fixed protocol rejection codes.
+                    // No response, credential or free-form exception enters logs.
+                    if (credential.token.empty()) auth_state(false, credential.code);
                     if (!credential.token.empty()) {
                         if (credential.expires <= wall || credential.renew_after <= wall) throw std::runtime_error("KAC_RESPONSE_EXPIRED");
                         atomic_private_file(session.token_file(), credential.token);
