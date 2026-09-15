@@ -187,8 +187,9 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     });
     struct AdvisoryJoin {std::atomic<bool>& finished;std::thread& thread;~AdvisoryJoin(){finished=true;thread.join();}} advisory_join{finished,advisory};
     val::SubscribeRequest subscription;
-    for (const auto* path : paths) { auto* entry = subscription.add_entries(); entry->set_path(path); entry->set_view(val::VIEW_CURRENT_VALUE); }
-    {auto* entry=subscription.add_entries();entry->set_path(status_path);entry->set_view(val::VIEW_CURRENT_VALUE);}
+    // The pinned KUKSA Subscribe handler uses explicit fields, not Get views.
+    for (const auto* path : paths) { auto* entry = subscription.add_entries(); entry->set_path(path); entry->set_view(val::VIEW_CURRENT_VALUE); entry->add_fields(val::FIELD_VALUE); }
+    {auto* entry=subscription.add_entries();entry->set_path(status_path);entry->set_view(val::VIEW_CURRENT_VALUE);entry->add_fields(val::FIELD_VALUE);}
     auto stream_context = make_context();
     auto reader = stub->Subscribe(stream_context.get(), subscription);
     struct Cancel {
