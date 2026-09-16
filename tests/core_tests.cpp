@@ -48,6 +48,43 @@ void model_tests(){
  assert(!assess(state,{-1,0,0,0},30,random_uuid()));
 }
 void input_episode_tests(){
+ {
+  Episode raw{random_uuid(),1000,4900,{},"COMPLETE"};
+  for(int i=0;i<40;++i) {
+   Frame frame;frame.epoch_ms=1000+i*100;frame.values[0]=50;
+   for(int wheel=3;wheel<7;++wheel)frame.values[wheel]=50;
+   frame.values[3]=48;
+   if(i<5)frame.values[7]=-0.08;
+   if(i>=5&&i<10)frame.values[14]=-4.0;
+   raw.samples.push_back(frame);
+  }
+  auto f=extract_features(raw);assert(f);
+  assert(f->longitudinal==4000&&f->lateral==5000&&f->dispersion==2667&&f->persistence==2500);
+  // Multiple wheels/thresholds in one sample count once; equality is included.
+  raw.samples[0].values[8]=0.08;raw.samples[0].values[12]=4.0;
+  assert(extract_features(raw)->persistence==2500);
+  for(auto& frame:raw.samples) {
+   for(int wheel=3;wheel<7;++wheel)frame.values[wheel]=0;
+  }
+  assert(extract_features(raw)->dispersion==0);
+  raw.samples[0].values[3]=1;assert(extract_features(raw)->dispersion==10000);
+  auto invalid=raw;invalid.samples[0].values[7]=std::numeric_limits<double>::quiet_NaN();assert(!extract_features(invalid));
+  invalid=raw;invalid.samples[0].values[3]=-1;assert(!extract_features(invalid));
+  invalid=raw;invalid.samples[1].epoch_ms=invalid.samples[0].epoch_ms;assert(!extract_features(invalid));
+  invalid=raw;invalid.terminal="INCOMPLETE_SOURCE_GAP";assert(!extract_features(invalid));
+  invalid=raw;invalid.samples.resize(19);assert(!extract_features(invalid));
+  Temp t;Runtime product(t.root/"state",t.root/"outbox",metadata());
+  assert(product.apply_episode(*f,raw,kModelConfigSha256));
+  bool assessment_seen=false;
+  while(const auto message=product.next_message()) {
+   const auto record=parse_json(message->bytes);
+   if(record.at("messageType").string()=="TIRE_HEALTH_ASSESSMENT") {
+    assert(record.at("modelConfigSha256").string()==kModelConfigSha256);assessment_seen=true;
+   }
+   assert(product.accept(*message,ack(message->bytes)));
+  }
+  assert(assessment_seen);
+ }
  std::array<Signal,15> signals;for(auto& value:signals)value={0,1000,true};assert(complete_frame(signals,1250));assert(!complete_frame(signals,1251));signals[5].epoch_ms=999;assert(!complete_frame(signals,1000));
  EpisodeEngine engine;Frame frame;frame.values[0]=20;frame.values[2]=5;std::optional<Episode> completed;
  for(int i=0;i<=130;i++){frame.epoch_ms=1000+i*100;auto result=engine.ingest(frame);if(result)completed=result;}

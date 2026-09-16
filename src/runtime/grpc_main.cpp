@@ -219,10 +219,14 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
         const auto result = runtime.ingest(*frame);
         previous_epoch = frame->epoch_ms;
         last_frame = now;
-        log.state("READINESS_CHANGED","NOT_READY","MODEL_CONTRACT_UNRESOLVED");
-        // Accepted normalization does not define dispersion/reference arithmetic
-        // or persistence equality. No product extractor or substitute is enabled.
-        if(result)log.state("EXERCISE_SKIPPED","NOT_READY","MODEL_CONTRACT_UNRESOLVED");
+        runtime.function_status("READY",wall_milliseconds());
+        log.state("READINESS_CHANGED","READY","NONE");
+        if(result) {
+            const auto features=tire_health::extract_features(*result);
+            const bool accepted=features && runtime.apply_episode(*features,*result,tire_health::kModelConfigSha256);
+            log.state(accepted?"EXERCISE_COMPLETED":"EXERCISE_SKIPPED",
+                accepted?"READY":"NOT_READY",accepted?"NONE":"ASSESSMENT_SKIPPED_INPUT_QUALITY",result->id);
+        }
     }
     stream_context->TryCancel();
     (void)reader->Finish();

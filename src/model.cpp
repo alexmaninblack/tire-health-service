@@ -27,6 +27,38 @@ Json::Object base(const Metadata& m,const std::string& type) {
 }
 const char* band_name(Band b) {switch(b){case Band::NotEvaluated:return "NOT_EVALUATED";case Band::Good:return "GOOD";case Band::Inspection:return "INSPECTION_RECOMMENDED";case Band::Replacement:return "REPLACEMENT_RECOMMENDED";}throw std::invalid_argument("BAND_INVALID");}
 Band parse_band(const std::string& name){for(auto b:{Band::NotEvaluated,Band::Good,Band::Inspection,Band::Replacement})if(name==band_name(b))return b;throw std::invalid_argument("BAND_INVALID");}
+std::optional<Features> extract_features(const Episode& episode) {
+ if ((episode.terminal!="COMPLETE" && episode.terminal!="TRUNCATED_MAX_DURATION") ||
+     episode.samples.size()<20 || episode.samples.size()>120) return {};
+ double longitudinal=0, lateral=0, dispersion=0;
+ std::size_t slipping=0;
+ std::int64_t previous=-1;
+ for(const auto& frame:episode.samples) {
+  if(frame.epoch_ms<=previous || frame.epoch_ms<episode.started || frame.epoch_ms>episode.ended ||
+     !std::all_of(frame.values.begin(),frame.values.end(),[](double v){return std::isfinite(v);}) ||
+     frame.values[0]<0) return {};
+  previous=frame.epoch_ms;
+  const auto wheel=std::minmax_element(frame.values.begin()+3,frame.values.begin()+7);
+  if(*wheel.first<0)return {};
+  dispersion=std::max(dispersion,(*wheel.second-*wheel.first)/std::max(*wheel.second,5.0));
+  bool slip=false;
+  for(std::size_t i=7;i<11;++i) {
+   longitudinal=std::max(longitudinal,std::abs(frame.values[i]));
+   slip=slip || std::abs(frame.values[i])>=0.08;
+  }
+  for(std::size_t i=11;i<15;++i) {
+   lateral=std::max(lateral,std::abs(frame.values[i]));
+   slip=slip || std::abs(frame.values[i])>=4.0;
+  }
+  if(slip)++slipping;
+ }
+ const auto bps=[](double value,double normalization) {
+  return static_cast<int>(std::floor(std::min(1.0,value/normalization)*10000.0+0.5));
+ };
+ const auto count=episode.samples.size();
+ return Features{bps(longitudinal,0.20),bps(lateral,8.0),bps(dispersion,0.15),
+     static_cast<int>((slipping*10000+count/2)/count)};
+}
 std::optional<Assessment> assess(ModelState& state,const Features& f,int samples,const std::string& source) {
  if(samples<20 || samples>120 || !is_uuid(source))return std::nullopt;
  for(auto n:{f.longitudinal,f.lateral,f.dispersion,f.persistence})if(n<0 || n>10000)return std::nullopt;

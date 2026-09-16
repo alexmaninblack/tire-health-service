@@ -14,8 +14,7 @@ public:
  void function_status(const std::string& reason,std::int64_t now,const std::vector<std::string>& missing={});
  std::optional<Pending> next_message();
  bool accept(const Pending&,const runtime::HttpResponse&);
- // Internal domain seam only, never a CLI/HTTP override. Production extraction
- // has no implementation until the precise arithmetic is accepted.
+ // Internal domain seam only, never a CLI/HTTP override.
  bool apply_episode(const Features&,const Episode&,const std::string& model_digest);
  std::optional<std::string> next_advisory(std::int64_t now);
  void gateway_status(const std::string&,std::int64_t now);

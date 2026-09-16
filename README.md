@@ -36,17 +36,20 @@ resource paths are independent.
 | Implemented source | Not yet established |
 | --- | --- |
 | KAC bootstrap, private expiring JWT, TLS KUKSA adapter and exact 15-path metadata checking | Actual Linux ARM64 gRPC build/container run |
-| Source-time maneuver segmentation and normalized BPS model/hysteresis | Raw dispersion denominator and persistence equality rule absent from accepted sources |
+| Source-time maneuver segmentation, approved raw features and BPS model/hysteresis | Live raw-input classification and advisory qualification |
 | Persistent derived-only outbox, matching durable ACK, retries/conflict retention | Complete crash-injection/live restart/network-isolation qualification |
 | Typed Tire advisory lease, sequence and Gateway correlation | Live advisory proof; Set success is not application evidence |
 | Function-status builder and independent outbound delivery | Complete five-axis readiness integration in product executable |
 | Native fixtures and cross-language wire validation | Calibration, independent 10/10 classification and quota proof |
 
-The product executable reports `MODEL_CONTRACT_UNRESOLVED` when compatible
-fresh input arrives. It does **not** call the normalized-feature model seam
-with invented extraction arithmetic. That seam is internal C++, not an
-operator endpoint or live fixture input. No fabricated assessment, GOOD state
-or advisory bypasses the gate.
+The 16 September operator amendment defines raw wheel dispersion as
+`(maxWheelSpeed-minWheelSpeed)/max(maxWheelSpeed,5 km/h)`, reduced by the
+maximum over valid active samples. Slip persistence is the fraction of valid
+active samples with any wheel at absolute longitudinal slip >=0.08 or lateral
+slip angle >=4 degrees. The product now extracts those real-input features;
+the internal normalized-feature seam is not an operator endpoint. Invalid or
+incomplete episodes never fabricate an assessment, GOOD state or advisory.
+Live real-input/advisory qualification remains required.
 
 ## Exact runtime/package inputs
 
