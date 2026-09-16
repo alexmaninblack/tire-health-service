@@ -118,9 +118,10 @@ export. The manifest always states `liveQualified: false`.
 Demo Control consumes only the allowed rootfs leaves during package
 preparation, adds its single allocated package/publication version and the
 accepted Tire service configuration, then owns signing/publication. Product
-compilation is neither publication nor functional acceptance. In particular,
-the existing `MODEL_CONTRACT_UNRESOLVED` gate, calibration, incomplete state/
-readiness and CPU-proof work remain unchanged; export does not invent model
-arithmetic or claim working analytics. Actual ARM64 compilation, KAC/TLS,
+compilation is neither publication nor functional acceptance. The operator
+approved the exact raw-feature extraction formulas on 16 September 2026;
+the runtime now applies that model rather than `MODEL_CONTRACT_UNRESOLVED`.
+This source closure does not qualify live analytics, calibration, readiness
+or resource usage. Actual ARM64 compilation, KAC/TLS,
 subscriptions, renewal, native mounts, recovery and backend records require
 their separately controlled build and live gates.
