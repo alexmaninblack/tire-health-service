@@ -54,13 +54,13 @@ std::size_t path_index(const std::string& path) {
     return static_cast<std::size_t>(position - paths.begin());
 }
 void verify_metadata(const val::GetResponse& response) {
-    if (response.has_error() || response.errors_size() || response.entries_size() != 17) throw std::runtime_error("VDP_INCOMPATIBLE");
+    if (response.has_error() || response.errors_size() || response.entries_size() != 18) throw std::runtime_error("VDP_INCOMPATIBLE");
     std::set<std::size_t> seen;
     for (const auto& entry : response.entries()) {
         const auto& metadata = entry.metadata();
-        if(entry.path()==request_path || entry.path()==status_path) {
-            const auto index=entry.path()==request_path?15U:16U;
-            if(!seen.insert(index).second || !entry.has_metadata() || metadata.data_type()!=val::DATA_TYPE_STRING || metadata.entry_type()!=(index==15?val::ENTRY_TYPE_ACTUATOR:val::ENTRY_TYPE_SENSOR)) throw std::runtime_error("VDP_INCOMPATIBLE");
+        if(entry.path()==request_path || entry.path()==status_path || entry.path()==readiness_path) {
+            const auto index=entry.path()==request_path?15U:entry.path()==status_path?16U:17U;
+            if(!seen.insert(index).second || !entry.has_metadata() || metadata.data_type()!=val::DATA_TYPE_STRING || metadata.entry_type()!=(index==16?val::ENTRY_TYPE_SENSOR:val::ENTRY_TYPE_ACTUATOR)) throw std::runtime_error("VDP_INCOMPATIBLE");
             continue;
         }
         const auto index = path_index(entry.path());
@@ -84,7 +84,22 @@ void deliver(Runtime& runtime, std::atomic<bool>& stop, Log& log) {
     std::mt19937 random(std::random_device{}());
     std::uniform_real_distribution<double> jitter(-0.2, 0.2);
     unsigned attempt = 0;
+    std::int64_t next_control=0,next_delivery=0;
     while (!stop && !interrupted) {
+        if(boot_milliseconds()>=next_control) {
+            try {
+                if(const auto ack=runtime.demo_control_ack(wall_milliseconds())) {
+                    const auto response=post_demo_control(*ack,stop,true);
+                    if(response.status==200)runtime.demo_control_accepted(response.body);
+                }
+                if(const auto poll=runtime.demo_control_poll()) {
+                    const auto response=post_demo_control(*poll,stop,false);
+                    if(response.status==200)runtime.demo_control_command(response.body,wall_milliseconds());
+                }
+            } catch(...) {log.state("DEMO_CONTROL_CHANGED","UNAVAILABLE","RESET_CONTROL_UNAVAILABLE");}
+            next_control=boot_milliseconds()+5000;
+        }
+        if(boot_milliseconds()<next_delivery){pause(stop,100);continue;}
         try {
             const auto pending = runtime.next_message();
             if (!pending) { attempt = 0; pause(stop, 100); continue; }
@@ -94,7 +109,7 @@ void deliver(Runtime& runtime, std::atomic<bool>& stop, Log& log) {
                 attempt = 0; log.state("BACKEND_CONNECTION_CHANGED", "CONNECTED", "NONE");
             } else {
                 log.state("BACKEND_CONNECTION_CHANGED", "BACKLOG", "NONE");
-                pause(stop, retry_delay(attempt++, jitter(random), response.retry_after) * 1000LL);
+                next_delivery=boot_milliseconds()+retry_delay(attempt++, jitter(random), response.retry_after)*1000LL;
             }
         } catch (...) {
             log.state("READINESS_CHANGED", "NOT_READY", "STORAGE_UNAVAILABLE");
@@ -155,7 +170,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     };
     val::GetRequest request; val::GetResponse response;
     for (const auto* path : paths) { auto* entry = request.add_entries(); entry->set_path(path); entry->set_view(val::VIEW_METADATA); }
-    for (const auto* path : {request_path,status_path}) {auto* entry=request.add_entries();entry->set_path(path);entry->set_view(val::VIEW_METADATA);}
+    for (const auto* path : {request_path,status_path,readiness_path}) {auto* entry=request.add_entries();entry->set_path(path);entry->set_view(val::VIEW_METADATA);}
     auto get_context = make_context();
     get_context->set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(8));
     const auto get_status = stub->Get(get_context.get(), request, &response);
@@ -167,6 +182,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     verify_metadata(response);
     log.state("VDP_COMPATIBILITY_CHANGED", "READY", "NONE");
     std::thread advisory([&] {
+        std::int64_t next_readiness=0;
         while(!finished && !stop && !interrupted && !invalid) {
             try {
                 const auto bytes=runtime.next_advisory(wall_milliseconds());
@@ -180,6 +196,16 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
                     // Transport success is never Gateway application evidence.
                     log.state("ADVISORY_REQUESTED","REQUESTED","NONE");
                     {std::lock_guard<std::mutex> lock(context_mutex);advisory_context.reset();}
+                }
+                if(boot_milliseconds()>=next_readiness) {
+                    auto context=std::make_shared<grpc::ClientContext>();context->AddMetadata("authorization","Bearer "+token);
+                    context->set_deadline(std::chrono::system_clock::now()+std::chrono::seconds(2));
+                    {std::lock_guard<std::mutex> lock(context_mutex);advisory_context=context;if(invalid)context->TryCancel();}
+                    val::SetRequest request;val::SetResponse response;auto* update=request.add_updates();update->mutable_entry()->set_path(readiness_path);
+                    update->mutable_entry()->mutable_actuator_target()->set_string(runtime.advisory_readiness(wall_milliseconds()));
+                    update->add_fields(val::FIELD_ACTUATOR_TARGET);(void)stub->Set(context.get(),request,&response);
+                    {std::lock_guard<std::mutex> lock(context_mutex);advisory_context.reset();}
+                    next_readiness=boot_milliseconds()+5000;
                 }
             } catch (...) {log.state("READINESS_CHANGED","NOT_READY","ADVISORY_UNAVAILABLE");}
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

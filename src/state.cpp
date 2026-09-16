@@ -69,7 +69,29 @@ void StateStore::validate_state(const Json& value) const {
  }
  const auto& states=std::get<Json::Array>(value.at("gatewayStates").value);std::set<std::string> statuses;
  for(const auto& item:states){const auto v=item.string();if(v!="RECEIVED"&&v!="APPLIED"&&v!="CLEARED"&&v!="REJECTED"&&v!="EXPIRED"&&v!="FAILED")throw std::runtime_error("NOT_READY_STATE");if(!statuses.insert(v).second)throw std::runtime_error("NOT_READY_STATE");}
- if(value.object().size()!=(value.object().count("lastRequestMetadata")?9U:8U) || value.at("schemaVersion").integer()!=1 || value.at("unitSystemUid").string()!=uid_ || !is_uuid(value.at("producerEpoch").string()) || value.at("nextAdvisorySequence").integer()<1 || value.at("lastPublishedAt").integer()<0 || canonical(value).size()>131072)throw std::runtime_error("NOT_READY_STATE");
+ if(value.object().size()!=8U+value.object().count("lastRequestMetadata")+value.object().count("demoReset") || value.at("schemaVersion").integer()!=1 || value.at("unitSystemUid").string()!=uid_ || !is_uuid(value.at("producerEpoch").string()) || value.at("nextAdvisorySequence").integer()<1 || value.at("lastPublishedAt").integer()<0 || canonical(value).size()>131072)throw std::runtime_error("NOT_READY_STATE");
+ if(value.object().count("demoReset")) {
+  const auto& reset=value.at("demoReset");const auto& command=reset.at("command");
+  if(reset.object().size()!=4||command.object().size()!=9||command.at("schemaVersion").integer()!=1||
+     command.at("unitSystemUid").string()!=uid_||command.at("producerEpoch").string()!=value.at("producerEpoch").string()||
+     command.at("operation").string()!="RESET_DEMO_SCENARIO"||!is_uuid(command.at("commandId").string())||
+     !date_time(command.at("issuedAt").string())||!date_time(command.at("expiresAt").string()))throw std::runtime_error("NOT_READY_STATE");
+  (void)parse_service_instance(command.at("serviceInstance"));
+  (void)reset.at("delivered").boolean();
+  const auto& ack=reset.at("ack");
+  if(!std::holds_alternative<std::nullptr_t>(ack.value)) {
+   if(ack.object().size()!=9||ack.at("commandId").string()!=command.at("commandId").string()||
+      (ack.at("result").string()!="CLEARED"&&ack.at("result").string()!="FAILED"))throw std::runtime_error("NOT_READY_STATE");
+   for(const auto* key:{"schemaVersion","unitSystemUid","serviceVersion","serviceInstance","producerEpoch"})
+    if(canonical(ack.at(key))!=canonical(command.at(key)))throw std::runtime_error("NOT_READY_STATE");
+  } else if(reset.at("delivered").boolean())throw std::runtime_error("NOT_READY_STATE");
+  if(!std::holds_alternative<std::nullptr_t>(reset.at("previousModel").value)) {
+   auto previous=value.object();previous.erase("demoReset");previous["model"]=reset.at("previousModel");
+   // Historical model keeps its historical sequence; validate it independently.
+   previous["nextAdvisorySequence"]=previous.at("model").at("nextAdvisorySequence");previous["lastRequest"]=Json{nullptr};
+   previous.erase("lastRequestMetadata");validate_state(Json{previous});
+  }
+ }
  if(!std::holds_alternative<std::nullptr_t>(value.at("lastRequest").value)) {
   const auto& request=value.at("lastRequest");
   if(request.at("producerEpoch").string()!=value.at("producerEpoch").string() || request.at("sequence").integer()>=value.at("nextAdvisorySequence").integer())throw std::runtime_error("NOT_READY_STATE");

@@ -28,6 +28,7 @@ inline constexpr std::array<const char*,15> paths = {
  "Vehicle.CarlaSimulation.ChaosWheel.Row2.Left.LateralSlipAngle", "Vehicle.CarlaSimulation.ChaosWheel.Row2.Right.LateralSlipAngle"};
 inline constexpr const char* request_path="Vehicle.OEM.TireHealth.Advisory.Request";
 inline constexpr const char* status_path="Vehicle.OEM.TireHealth.Advisory.GatewayStatus";
+inline constexpr const char* readiness_path="Vehicle.OEM.TireHealth.Advisory.Readiness";
 struct Signal {double value{}; std::int64_t epoch_ms{}; bool valid{};};
 struct Frame {std::array<double,15> values{}; std::int64_t epoch_ms{};};
 std::optional<Frame> complete_frame(const std::array<Signal,15>&, std::int64_t wall_ms);
@@ -47,6 +48,8 @@ std::string exchange_credential(const std::string&, const std::atomic<bool>&);
 struct HttpResponse {int status{}; std::string body; int retry_after{};};
 HttpResponse parse_http_response(const std::string&);
 HttpResponse post_backend(const std::string& bytes, const std::atomic<bool>& stop, bool demo_mock = false);
+// Fixed local demo-control protocol, never an arbitrary command or URL.
+HttpResponse post_demo_control(const std::string& bytes, const std::atomic<bool>& stop, bool acknowledgement);
 bool matches_ack(const std::string&, const HttpResponse&);
 bool retryable_http(int);
 int retry_delay(unsigned, double jitter, int retry_after=0);

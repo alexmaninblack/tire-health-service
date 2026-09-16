@@ -194,6 +194,75 @@ void bound_request_recovery_tests() {
  native_fixture=false;
 }
 
+void demo_reset_tests(){
+ native_fixture=true;Temp t;const auto m=metadata();const auto e=episode();const auto now=e.ended+100;
+ std::string command_bytes,ack_bytes,epoch;Json clear;
+ {
+  Runtime runtime(t.root/"state",t.root/"outbox",m);
+  assert(runtime.apply_episode({10000,10000,10000,10000},e,kModelConfigSha256));
+  const auto warning=parse_json(*runtime.next_advisory(e.ended));epoch=warning.at("producerEpoch").string();
+  auto command=parse_json(*runtime.demo_control_poll()).object();
+  command["commandId"]=Json{random_uuid()};command["operation"]=Json{std::string("RESET_DEMO_SCENARIO")};
+  command["issuedAt"]=Json{utc_timestamp(now)};command["expiresAt"]=Json{utc_timestamp(now+60000)};
+  const auto envelope=[&](const Json::Object& c){return canonical(Json{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"command",Json{c}}}});};
+  command_bytes=envelope(command);
+  auto foreign=command;foreign["unitSystemUid"]=Json{std::string("production")};
+  rejects([&]{runtime.demo_control_command(envelope(foreign),now);});
+  auto expired=command;expired["expiresAt"]=Json{utc_timestamp(now)};
+  rejects([&]{runtime.demo_control_command(envelope(expired),now);});
+  runtime.demo_control_command(command_bytes,now);
+  clear=parse_json(*runtime.next_advisory(now));
+  assert(clear.at("operation").string()=="CLEAR"&&clear.at("producerEpoch").string()==epoch);
+  assert(clear.at("sequence").integer()>warning.at("sequence").integer());
+  StateStore state(t.root/"state",t.root/"outbox",m.unit_system_uid);
+  const auto snapshot=canonical(state.state());const auto queued=state.queued();
+  assert(queued==2);assert(std::holds_alternative<std::nullptr_t>(state.state().at("model").value));
+  runtime.demo_control_command(command_bytes,now+10);
+  assert(!runtime.demo_control_ack(now+10));assert(!runtime.next_advisory(now+10));
+  StateStore same(t.root/"state",t.root/"outbox",m.unit_system_uid);
+  assert(canonical(same.state())==snapshot&&same.queued()==queued);
+  assert(!runtime.apply_episode({10000,10000,10000,10000},episode(now+500),kModelConfigSha256));
+ }
+ {
+  Runtime runtime(t.root/"state",t.root/"outbox",m);assert(runtime.state_ready());
+  const auto recovered=parse_json(*runtime.next_advisory(now+1500));
+  assert(recovered.at("sequence").integer()>clear.at("sequence").integer());clear=recovered;
+  Json::Object status{{"schemaVersion",Json{std::int64_t{1}}},{"requestId",clear.at("requestId")},
+   {"producerEpoch",clear.at("producerEpoch")},{"sequence",clear.at("sequence")},{"state",Json{std::string("CLEARED")}},
+   {"reason",Json{std::string("NONE")}},{"gatewayObservedAt",Json{utc_timestamp(now+1600)}},
+   {"activeRecommendation",Json{std::string("NONE")}},{"activeReasonCode",Json{std::string("NONE")}},{"activeUntil",Json{nullptr}}};
+  auto wrong=status;wrong["requestId"]=Json{random_uuid()};
+  rejects([&]{runtime.gateway_status(canonical(Json{wrong}),now+1600);});
+  assert(!runtime.demo_control_ack(now+1600));
+  runtime.gateway_status(canonical(Json{status}),now+1600);
+  ack_bytes=*runtime.demo_control_ack(now+1700);
+  assert(parse_json(ack_bytes).at("result").string()=="CLEARED");
+  assert(!runtime.next_advisory(now+2000));
+  runtime.demo_control_command(command_bytes,now+1800);
+  assert(runtime.demo_control_ack(now+1800)==ack_bytes);
+  assert(!runtime.apply_episode({10000,10000,10000,10000},e,kModelConfigSha256));
+  assert(runtime.apply_episode({10000,10000,10000,10000},episode(now+3000),kModelConfigSha256));
+  const auto renewed=parse_json(*runtime.next_advisory(now+3000));
+  assert(renewed.at("operation").string()=="SET"&&renewed.at("sequence").integer()>clear.at("sequence").integer());
+  assert(!parse_json(runtime.advisory_readiness(now)).at("ready").boolean());
+  runtime.function_status("READY",now+3000);
+  assert(parse_json(runtime.advisory_readiness(now+5000)).at("ready").boolean());
+  assert(!parse_json(runtime.advisory_readiness(now+9000)).at("ready").boolean());
+  runtime.disconnect();assert(!parse_json(runtime.advisory_readiness(now+5000)).at("ready").boolean());
+ }
+ {
+  Runtime runtime(t.root/"state",t.root/"outbox",m);assert(runtime.demo_control_ack(now+4000)==ack_bytes);
+  const auto command=parse_json(command_bytes).at("command");
+  runtime.demo_control_accepted(canonical(Json{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"commandId",command.at("commandId")},{"state",Json{std::string("CLEARED")}}}}));
+  assert(!runtime.demo_control_ack(now+4000));
+  auto next=command.object();next["commandId"]=Json{random_uuid()};
+  next["issuedAt"]=Json{utc_timestamp(now+5000)};next["expiresAt"]=Json{utc_timestamp(now+65000)};
+  runtime.demo_control_command(canonical(Json{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"command",Json{next}}}}),now+5000);
+  assert(!runtime.next_advisory(now+65000));
+  assert(parse_json(*runtime.demo_control_ack(now+65000)).at("result").string()=="FAILED");
+ }
+ native_fixture=false;
+}
 void emit_conformance(){
  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());const auto e=episode();
  assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
@@ -204,4 +273,4 @@ void emit_conformance(){
  unsigned count=0;while(const auto pending=runtime.next_message()){if(native_fixture){const auto msg=parse_json(pending->bytes);assert(msg.at("schemaVersion").integer()==2 && !msg.object().count("serviceArtifactSha256") && !msg.object().count("modelArtifactSha256"));assert(parse_service_instance(msg.at("serviceInstance"))==*metadata().service_instance);}std::cout<<pending->bytes<<'\n';assert(runtime.accept(*pending,ack(pending->bytes)));++count;}assert(count==4);
 }
 }
-int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}
+int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();demo_reset_tests();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}
