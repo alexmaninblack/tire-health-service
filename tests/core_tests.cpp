@@ -263,6 +263,37 @@ void demo_reset_tests(){
  }
  native_fixture=false;
 }
+void source_recovery_preserves_model_and_delivery(){
+ // Synthetic host-domain proof. The gRPC consumer calls function_status only
+ // after a valid fresh frame; this does not identify an active VDP profile.
+ native_fixture=true;Temp t;const auto m=metadata();const auto e=episode();
+ Runtime runtime(t.root/"state",t.root/"outbox",m);
+ assert(runtime.apply_episode({10000,10000,10000,10000},e,kModelConfigSha256));
+ const auto pending=runtime.next_message();assert(pending);const auto bytes=pending->bytes;
+ StateStore before(t.root/"state",t.root/"outbox",m.unit_system_uid);
+ const auto model=canonical(before.state().at("model"));
+ const auto producer=before.state().at("producerEpoch").string();
+ const auto sequence=before.state().at("nextAdvisorySequence").integer();
+ runtime.function_status("READY",e.ended);
+ assert(parse_json(runtime.advisory_readiness(e.ended)).at("ready").boolean());
+ runtime.disconnect();runtime.update_vdp_metadata(m);
+ assert(!parse_json(runtime.advisory_readiness(e.ended+100)).at("ready").boolean());
+ std::array<Signal,15> signals;
+ for(auto& value:signals)value={0,e.ended+100,true};
+ signals[2].valid=false;assert(!complete_frame(signals,e.ended+120));
+ assert(!parse_json(runtime.advisory_readiness(e.ended+120)).at("ready").boolean());
+ signals[2].valid=true;const auto frame=complete_frame(signals,e.ended+120);assert(frame);
+ assert(!runtime.ingest(*frame));runtime.function_status("READY",e.ended+120);
+ assert(parse_json(runtime.advisory_readiness(e.ended+120)).at("ready").boolean());
+ StateStore after(t.root/"state",t.root/"outbox",m.unit_system_uid);
+ assert(canonical(after.state().at("model"))==model);
+ assert(after.state().at("producerEpoch").string()==producer);
+ assert(after.state().at("nextAdvisorySequence").integer()==sequence);
+ // Status may sort before the retained product by message key. Check the
+ // original durable record, not an unsupported FIFO delivery assumption.
+ assert(read_file(t.root/"outbox"/(pending->key+".json"),16384)==bytes);
+ native_fixture=false;
+}
 void emit_conformance(){
  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());const auto e=episode();
  assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
@@ -273,4 +304,4 @@ void emit_conformance(){
  unsigned count=0;while(const auto pending=runtime.next_message()){if(native_fixture){const auto msg=parse_json(pending->bytes);assert(msg.at("schemaVersion").integer()==2 && !msg.object().count("serviceArtifactSha256") && !msg.object().count("modelArtifactSha256"));assert(parse_service_instance(msg.at("serviceInstance"))==*metadata().service_instance);}std::cout<<pending->bytes<<'\n';assert(runtime.accept(*pending,ack(pending->bytes)));++count;}assert(count==4);
 }
 }
-int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();demo_reset_tests();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}
+int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();demo_reset_tests();source_recovery_preserves_model_and_delivery();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}
