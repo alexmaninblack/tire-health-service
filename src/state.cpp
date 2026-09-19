@@ -81,7 +81,11 @@ void StateStore::validate_state(const Json& value) const {
   const auto& ack=reset.at("ack");
   if(!std::holds_alternative<std::nullptr_t>(ack.value)) {
    if(ack.object().size()!=9||ack.at("commandId").string()!=command.at("commandId").string()||
-      (ack.at("result").string()!="CLEARED"&&ack.at("result").string()!="FAILED"))throw std::runtime_error("NOT_READY_STATE");
+      (ack.at("result").string()!="CLEARED"&&ack.at("result").string()!="FAILED"&&
+       ack.at("result").string()!="REJECTED"))throw std::runtime_error("NOT_READY_STATE");
+   if(ack.at("result").string()=="REJECTED"&&
+      (!std::holds_alternative<std::nullptr_t>(ack.at("clearRequest").value)||
+       !std::holds_alternative<std::nullptr_t>(ack.at("gatewayStatus").value)))throw std::runtime_error("NOT_READY_STATE");
    for(const auto* key:{"schemaVersion","unitSystemUid","serviceVersion","serviceInstance","producerEpoch"})
     if(canonical(ack.at(key))!=canonical(command.at(key)))throw std::runtime_error("NOT_READY_STATE");
   } else if(reset.at("delivered").boolean())throw std::runtime_error("NOT_READY_STATE");

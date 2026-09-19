@@ -44,7 +44,7 @@ The `.dockerignore` allowlist includes only required build source, tests,
 exporter and public notices. Git, local state, build artifacts, package release
 metadata, public runtime metadata and private credential files are excluded.
 The recipe runs the isolated exporter/recipe tests before service compilation,
-then all three CTest suites before installation/export. Contract-test
+then all five CTest suites before installation/export. Contract-test
 assertions stay enabled even in Release builds. The test executable is
 not installed or included in the exported rootfs.
 
@@ -109,10 +109,11 @@ It contains the source revision/timestamp; two binary path, SHA-256, size,
 interpreter, dependency and GLIBC records; verified dependency revisions;
 compiler runtime package versions; base image and snapshot references.
 
-Its `tests` section must say `ctest: passed`, `count: 3`, identify
+Its `tests` section must say `ctest: passed`, `count: 5`, identify
 `evidence/ctest-results.xml` and contain that report's SHA-256. Required suite
-names are exactly `native_service_inputs`, `tire_private_token_session` and
-`tire_health_contract`; missing, duplicate, failed or skipped cases refuse
+names are exactly `native_service_inputs`, `tire_private_token_session`,
+`tire_health_contract`, `tire_demo_mock_isolation` and
+`function_observation_delivery`; missing, duplicate, failed or skipped cases refuse
 export. The manifest always states `liveQualified: false`.
 
 Demo Control consumes only the allowed rootfs leaves during package

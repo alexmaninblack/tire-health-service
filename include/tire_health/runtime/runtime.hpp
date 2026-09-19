@@ -37,6 +37,7 @@ bool date_time(const std::string&);
 std::string random_uuid();
 std::string uuid_v5(const std::string&, const std::vector<std::string>&);
 std::string read_file(const std::filesystem::path&, std::size_t limit);
+std::optional<std::string> read_optional_public_file(const std::filesystem::path&, std::size_t limit);
 void atomic_private_file(const std::filesystem::path&, const std::string&);
 void durable_file(const std::filesystem::path&, const std::string&);
 std::string canonical(const Json&);

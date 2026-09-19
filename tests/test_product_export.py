@@ -132,16 +132,17 @@ class ProductExportTests(unittest.TestCase):
                     EXPORT.inspect_product_elf(path)
 
     def test_requires_actual_complete_successful_ctest_report(self) -> None:
-        names = ("native_service_inputs", "tire_private_token_session", "tire_health_contract", "tire_demo_mock_isolation")
+        names = ("native_service_inputs", "tire_private_token_session", "tire_health_contract", "tire_demo_mock_isolation", "function_observation_delivery")
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "report.xml"
-            body = '<testsuite tests="4" failures="0">' + "".join(
+            body = '<testsuite tests="5" failures="0">' + "".join(
                 f'<testcase name="{name}" />' for name in names) + "</testsuite>"
             path.write_text(body, encoding="utf-8")
             self.assertEqual("passed", EXPORT.inspect_test_report(path)["ctest"])
-            self.assertEqual(4, EXPORT.inspect_test_report(path)["count"])
+            self.assertEqual(5, EXPORT.inspect_test_report(path)["count"])
             self.assertEqual(hashlib.sha256(body.encode()).hexdigest(), EXPORT.inspect_test_report(path)["reportSha256"])
             for invalid in (
+                body.replace('<testcase name="function_observation_delivery" />', ''),
                 body.replace('name="tire_health_contract"', 'name="brake_health_contract"'),
                 body.replace('</testsuite>', '<testcase name="tire_health_contract" /></testsuite>'),
                 body.replace('name="tire_health_contract" />', 'name="tire_health_contract"><failure /></testcase>'),
@@ -217,7 +218,7 @@ class ProductExportTests(unittest.TestCase):
         self.assertIn('if(NOT THS_FUNCTIONAL_PROFILE STREQUAL "v1")', cmake)
         self.assertIn("message(FATAL_ERROR", cmake)
         self.assertIn("target_compile_options(tire_health_tests PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG)", cmake)
-        self.assertEqual({"native_service_inputs", "tire_private_token_session", "tire_health_contract", "tire_demo_mock_isolation"},
+        self.assertEqual({"native_service_inputs", "tire_private_token_session", "tire_health_contract", "tire_demo_mock_isolation", "function_observation_delivery"},
                          set(re.findall(r"add_test\(NAME\s+(\w+)", cmake)))
         runtime = (ROOT / "cmake/KuksaRuntime.cmake").read_text(encoding="utf-8")
         self.assertIn("install(TARGETS tire-health-service tire-health-bootstrap RUNTIME DESTINATION bin)", runtime)

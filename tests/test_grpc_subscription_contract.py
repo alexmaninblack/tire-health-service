@@ -6,6 +6,23 @@ from pathlib import Path
 
 
 class SubscribeContractTests(unittest.TestCase):
+    def test_renewal_recreates_stream_without_skipping_authentication(self):
+        source = (Path(__file__).resolve().parents[1] / "src/runtime/grpc_main.cpp").read_text()
+        self.assertIn("inspect_session_inputs(inputs, token_file, token, metadata_bytes, ca)", source)
+        self.assertIn("catch (const ReauthenticationRequired&)", source)
+        self.assertIn("runtime.disconnect();", source)
+        self.assertIn("grpc::StatusCode::CANCELLED", source)
+        self.assertIn("grpc::StatusCode::UNAUTHENTICATED", source)
+        self.assertIn("pause(stop, 1000);", source)  # Real failures retain backoff.
+        renewal = source.rsplit("catch (const ReauthenticationRequired&)", 1)[1].split("catch (const std::exception&", 1)[0]
+        self.assertIn("continue;", renewal)
+        self.assertNotIn("pause(", renewal)
+
+    def test_bad_advisory_status_does_not_report_failed_telemetry(self):
+        source = (Path(__file__).resolve().parents[1] / "src/runtime/grpc_main.cpp").read_text()
+        self.assertIn('log.state("ADVISORY_STATUS_CHANGED","UNAVAILABLE","GATEWAY_STATUS_INVALID")', source)
+        self.assertNotIn('log.state("READINESS_CHANGED","NOT_READY","GATEWAY_STATUS_INVALID")', source)
+
     def test_auth_diagnostic_uses_validated_code_without_response(self):
         source = (Path(__file__).resolve().parents[1] / "src/runtime/bootstrap_main.cpp").read_text()
         self.assertIn("if (credential.token.empty()) auth_state(false, credential.code)", source)

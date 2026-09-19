@@ -23,6 +23,7 @@ class EpisodeEngine {
   std::optional<Episode> ingest(const runtime::Frame&);
   std::optional<Episode> abort(const std::string& reason);
   bool active() const {return current_.has_value();}
+  std::optional<std::string> activity_id() const {return current_?std::optional<std::string>{current_->id}:std::nullopt;}
  private:
   std::function<std::string()> uuid_; std::optional<Episode> current_;
   std::int64_t activation_=-1, clear_=-1, previous_=-1, retained_=-1; bool suppressed_{};
@@ -31,4 +32,6 @@ runtime::Json assessment_message(const runtime::Metadata&, const ModelState&, co
 runtime::Json event_message(const runtime::Json& assessment);
 runtime::Json advisory_request(const runtime::Metadata&, const std::string& epoch, std::int64_t sequence, const std::string& assessment_id, Band, std::int64_t now);
 runtime::Json advisory_fact(const runtime::Metadata&, const runtime::Json& request, const runtime::Json& status, std::int64_t now);
+// Validate the closed own-endpoint envelope before deciding correlation.
+void validate_gateway_status(const runtime::Json& status);
 } // namespace tire_health

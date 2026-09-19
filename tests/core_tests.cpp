@@ -124,7 +124,7 @@ void advisory_tests(){
   const auto request=runtime.next_advisory(e.ended);assert(request);const auto r=parse_json(*request);epoch=r.at("producerEpoch").string();sequence=r.at("sequence").integer();
   assert(!runtime.next_advisory(e.ended+500));assert(runtime.next_advisory(e.ended+1000)==request);
   Json::Object status{{"schemaVersion",Json{std::int64_t{1}}},{"requestId",r.at("requestId")},{"producerEpoch",r.at("producerEpoch")},{"sequence",r.at("sequence")},{"state",Json{std::string("APPLIED")}},{"reason",Json{std::string("NONE")}},{"gatewayObservedAt",Json{utc_timestamp(e.ended+1000)}},{"activeRecommendation",r.at("recommendation")},{"activeReasonCode",Json{std::string("PREDICTED_TIRE_WEAR")}},{"activeUntil",r.at("expiresAt")}};
-  auto wrong=status;wrong["producerEpoch"]=Json{random_uuid()};rejects([&]{runtime.gateway_status(canonical(Json{wrong}),e.ended+1000);});
+  auto wrong=status;wrong["producerEpoch"]=Json{random_uuid()};runtime.gateway_status(canonical(Json{wrong}),e.ended+1000);
   runtime.gateway_status(canonical(Json{status}),e.ended+1000);runtime.gateway_status(canonical(Json{status}),e.ended+2000);
   assert(!runtime.next_advisory(e.ended+3000));
   for(int i=0;i<3;++i){e.id=random_uuid();e.ended+=5000;runtime.apply_episode({0,0,0,0},e,std::string(64,'c'));}
@@ -194,6 +194,39 @@ void bound_request_recovery_tests() {
  native_fixture=false;
 }
 
+void reset_pending_across_service_update(){
+ native_fixture=true;Temp t;auto m=metadata();const auto e=episode();const auto now=e.ended+100;
+ std::string command_bytes,queue_bytes,command_id;
+ {
+  Runtime runtime(t.root/"state",t.root/"outbox",m);
+  assert(runtime.apply_episode({10000,10000,10000,10000},e,kModelConfigSha256));
+  queue_bytes=runtime.next_message()->bytes;
+  auto command=parse_json(*runtime.demo_control_poll()).object();
+  command_id=random_uuid();command["commandId"]=Json{command_id};
+  command["operation"]=Json{std::string("RESET_DEMO_SCENARIO")};
+  command["issuedAt"]=Json{utc_timestamp(now)};command["expiresAt"]=Json{utc_timestamp(now+60000)};
+  command_bytes=canonical(Json{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"command",Json{command}}}});
+  runtime.demo_control_command(command_bytes,now);
+ }
+ m.service_version="22.0.0";
+ std::string rejected;
+ {
+  Runtime updated(t.root/"state",t.root/"outbox",m);assert(updated.state_ready());
+  rejected=*updated.demo_control_ack(now+100);
+  const auto ack=parse_json(rejected);assert(ack.at("result").string()=="REJECTED");
+  assert(ack.at("serviceVersion").string()=="21.0.0"&&ack.at("commandId").string()==command_id);
+  assert(std::holds_alternative<std::nullptr_t>(ack.at("clearRequest").value));
+  assert(std::holds_alternative<std::nullptr_t>(ack.at("gatewayStatus").value));
+  assert(updated.next_message()->bytes==queue_bytes);
+  // A rejection is not proof that the already applied local reset was undone.
+  StateStore state(t.root/"state",t.root/"outbox",m.unit_system_uid);
+  assert(std::holds_alternative<std::nullptr_t>(state.state().at("model").value));
+ }
+ Runtime restarted(t.root/"state",t.root/"outbox",m);assert(restarted.state_ready());
+ assert(*restarted.demo_control_ack(now+200)==rejected);
+ assert(restarted.next_message()->bytes==queue_bytes);
+ native_fixture=false;
+}
 void demo_reset_tests(){
  native_fixture=true;Temp t;const auto m=metadata();const auto e=episode();const auto now=e.ended+100;
  std::string command_bytes,ack_bytes,epoch;Json clear;
@@ -232,7 +265,7 @@ void demo_reset_tests(){
    {"reason",Json{std::string("NONE")}},{"gatewayObservedAt",Json{utc_timestamp(now+1600)}},
    {"activeRecommendation",Json{std::string("NONE")}},{"activeReasonCode",Json{std::string("NONE")}},{"activeUntil",Json{nullptr}}};
   auto wrong=status;wrong["requestId"]=Json{random_uuid()};
-  rejects([&]{runtime.gateway_status(canonical(Json{wrong}),now+1600);});
+  runtime.gateway_status(canonical(Json{wrong}),now+1600);
   assert(!runtime.demo_control_ack(now+1600));
   runtime.gateway_status(canonical(Json{status}),now+1600);
   ack_bytes=*runtime.demo_control_ack(now+1700);
@@ -268,8 +301,11 @@ void source_recovery_preserves_model_and_delivery(){
  // after a valid fresh frame; this does not identify an active VDP profile.
  native_fixture=true;Temp t;const auto m=metadata();const auto e=episode();
  Runtime runtime(t.root/"state",t.root/"outbox",m);
+ assert(runtime.observation_binding()->at("serviceProfile").string()=="v1");
+ assert(runtime.function_observation().at("input").at("state").string()=="WAITING");
  assert(runtime.apply_episode({10000,10000,10000,10000},e,kModelConfigSha256));
  const auto pending=runtime.next_message();assert(pending);const auto bytes=pending->bytes;
+ assert(runtime.function_observation().at("lastResult").at("serviceVersion").string()=="21.0.0");
  StateStore before(t.root/"state",t.root/"outbox",m.unit_system_uid);
  const auto model=canonical(before.state().at("model"));
  const auto producer=before.state().at("producerEpoch").string();
@@ -284,6 +320,10 @@ void source_recovery_preserves_model_and_delivery(){
  assert(!parse_json(runtime.advisory_readiness(e.ended+120)).at("ready").boolean());
  signals[2].valid=true;const auto frame=complete_frame(signals,e.ended+120);assert(frame);
  assert(!runtime.ingest(*frame));runtime.function_status("READY",e.ended+120);
+ assert(runtime.function_observation().at("input").at("state").string()=="RECEIVING");
+ assert(!runtime.accept(*pending,{503,"",0}));
+ assert(runtime.function_observation().at("delivery").at("state").string()=="RETRYING");
+ assert(runtime.function_observation().at("input").at("state").string()=="RECEIVING");
  assert(parse_json(runtime.advisory_readiness(e.ended+120)).at("ready").boolean());
  StateStore after(t.root/"state",t.root/"outbox",m.unit_system_uid);
  assert(canonical(after.state().at("model"))==model);
@@ -294,6 +334,38 @@ void source_recovery_preserves_model_and_delivery(){
  assert(read_file(t.root/"outbox"/(pending->key+".json"),16384)==bytes);
  native_fixture=false;
 }
+void superseded_ack_keeps_input_and_model() {
+ Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());const auto e=episode();
+ assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
+ const auto first=parse_json(*runtime.next_advisory(e.ended));
+ Json::Object status{{"schemaVersion",Json{std::int64_t{1}}},{"requestId",first.at("requestId")},
+  {"producerEpoch",first.at("producerEpoch")},{"sequence",first.at("sequence")},{"state",Json{std::string("APPLIED")}},
+  {"reason",Json{std::string("NONE")}},{"gatewayObservedAt",Json{utc_timestamp(e.ended+1000)}},
+  {"activeRecommendation",first.at("recommendation")},{"activeReasonCode",Json{std::string("PREDICTED_TIRE_WEAR")}},
+  {"activeUntil",first.at("expiresAt")}};
+ runtime.gateway_status(canonical(Json{status}),e.ended+1000);
+ const auto next=runtime.next_advisory(e.ended+21000);assert(next);
+ runtime.function_status("READY",e.ended+21000);
+ StateStore before(t.root/"state",t.root/"outbox",metadata().unit_system_uid);
+ const auto snapshot=canonical(before.state());const auto queued=before.queued();
+ const auto pending=runtime.next_message();assert(pending);
+ runtime.gateway_status(canonical(Json{status}),e.ended+21500);
+ StateStore after(t.root/"state",t.root/"outbox",metadata().unit_system_uid);
+ assert(canonical(after.state())==snapshot&&after.queued()==queued);
+ assert(runtime.next_message()->bytes==pending->bytes);
+ assert(parse_json(runtime.advisory_readiness(e.ended+21500)).at("ready").boolean());
+ for(const auto* field:{"requestId","producerEpoch","sequence","state","activeRecommendation"}) {
+  auto invalid=status;
+  invalid[field]=std::string(field)=="sequence"?Json{std::int64_t{0}}:Json{std::string("INVALID")};
+  rejects([&]{runtime.gateway_status(canonical(Json{invalid}),e.ended+21600);});
+ }
+ auto malformed=status;malformed["extra"]=Json{true};
+ rejects([&]{runtime.gateway_status(canonical(Json{malformed}),e.ended+21600);});
+ auto foreign=status;foreign["producerEpoch"]=Json{random_uuid()};
+ runtime.gateway_status(canonical(Json{foreign}),e.ended+21600);
+ assert(canonical(after.state())==snapshot&&after.queued()==queued);
+}
+
 void emit_conformance(){
  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());const auto e=episode();
  assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
@@ -304,4 +376,4 @@ void emit_conformance(){
  unsigned count=0;while(const auto pending=runtime.next_message()){if(native_fixture){const auto msg=parse_json(pending->bytes);assert(msg.at("schemaVersion").integer()==2 && !msg.object().count("serviceArtifactSha256") && !msg.object().count("modelArtifactSha256"));assert(parse_service_instance(msg.at("serviceInstance"))==*metadata().service_instance);}std::cout<<pending->bytes<<'\n';assert(runtime.accept(*pending,ack(pending->bytes)));++count;}assert(count==4);
 }
 }
-int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();demo_reset_tests();source_recovery_preserves_model_and_delivery();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}
+int main(int argc,char**argv){if(argc==2&&std::string(argv[1])=="--emit-native-conformance"){native_fixture=true;emit_conformance();return 0;}if(argc==2&&std::string(argv[1])=="--emit-conformance"){emit_conformance();return 0;}superseded_ack_keeps_input_and_model();protocol_tests();model_tests();input_episode_tests();store_tests();runtime_tests();advisory_tests();corruption_capacity_tests();native_fixture=true;store_tests();runtime_tests();advisory_tests();native_fixture=false;bound_request_recovery_tests();reset_pending_across_service_update();demo_reset_tests();source_recovery_preserves_model_and_delivery();std::cout<<"PASS Tire protocol, normalized model, episode, persistent outbox, advisory and runtime contracts\n";}

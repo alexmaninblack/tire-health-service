@@ -113,18 +113,24 @@ Json advisory_request(const Metadata& m,const std::string& epoch,std::int64_t se
  if(band!=Band::Good)r["recommendation"]=text(band==Band::Inspection?"TIRE_INSPECTION_RECOMMENDED":"TIRE_REPLACEMENT_RECOMMENDED");
  return Json{r};
 }
-Json advisory_fact(const Metadata& m,const Json& request,const Json& status,std::int64_t now) {
- if(m.service_version!=request.at("serviceVersion").string())throw std::invalid_argument("ADVISORY_PROVENANCE_INVALID");
- for(const auto* field:{"requestId","producerEpoch","sequence"})if(canonical(request.at(field))!=canonical(status.at(field)))throw std::invalid_argument("UNCORRELATED_STATUS");
+void validate_gateway_status(const Json& status) {
  if(status.object().size()!=10 || status.at("schemaVersion").integer()!=1)throw std::invalid_argument("STATUS_INVALID");
+ if(!is_uuid(status.at("requestId").string()) || !is_uuid(status.at("producerEpoch").string()) ||
+    status.at("sequence").integer()<1)throw std::invalid_argument("STATUS_INVALID");
  const auto state=status.at("state").string(); const std::vector<std::string> states{"RECEIVED","APPLIED","CLEARED","REJECTED","EXPIRED","FAILED"};
  if(std::find(states.begin(),states.end(),state)==states.end())throw std::invalid_argument("STATUS_INVALID");
  const auto recommendation=status.at("activeRecommendation").string(),reason=status.at("activeReasonCode").string();
  const std::vector<std::string> reasons{"NONE","UNAUTHORIZED_SOURCE","UNAUTHORIZED_PATH","INVALID_SCHEMA","INVALID_VALUE","STALE_REQUEST","REPLAY_DETECTED","SEQUENCE_ROLLBACK","RATE_LIMITED","QM_POLICY_DENIED","INTERNAL_ERROR"};
  if(std::find(reasons.begin(),reasons.end(),status.at("reason").string())==reasons.end() || !date_time(status.at("gatewayObservedAt").string()) ||
-   (!std::holds_alternative<std::nullptr_t>(status.at("activeUntil").value) && !date_time(status.at("activeUntil").string())) ||
-   (state=="APPLIED" && request.at("operation").string()!="SET") || (state=="CLEARED" && request.at("operation").string()!="CLEAR"))throw std::invalid_argument("STATUS_INVALID");
+   (!std::holds_alternative<std::nullptr_t>(status.at("activeUntil").value) && !date_time(status.at("activeUntil").string())))throw std::invalid_argument("STATUS_INVALID");
  if((recommendation!="NONE" && recommendation!="TIRE_INSPECTION_RECOMMENDED" && recommendation!="TIRE_REPLACEMENT_RECOMMENDED") || (reason!="NONE" && reason!="PREDICTED_TIRE_WEAR"))throw std::invalid_argument("STATUS_WRONG_PRODUCT");
+}
+Json advisory_fact(const Metadata& m,const Json& request,const Json& status,std::int64_t now) {
+ validate_gateway_status(status);
+ if(m.service_version!=request.at("serviceVersion").string())throw std::invalid_argument("ADVISORY_PROVENANCE_INVALID");
+ for(const auto* field:{"requestId","producerEpoch","sequence"})if(canonical(request.at(field))!=canonical(status.at(field)))throw std::invalid_argument("UNCORRELATED_STATUS");
+ const auto state=status.at("state").string();
+ if((state=="APPLIED" && request.at("operation").string()!="SET") || (state=="CLEARED" && request.at("operation").string()!="CLEAR"))throw std::invalid_argument("STATUS_INVALID");
  auto msg=base(m,"TIRE_ADVISORY_FACT");for(const auto* f:{"requestId","producerEpoch","sequence"})msg[f]=request.at(f);msg["gatewayState"]=text(state);msg["recordedAt"]=text(utc_timestamp(now));
  Json::Object content{{"assessmentId",request.at("decisionId")},{"operation",request.at("operation")},{"reasonCode",request.at("reasonCode")},{"issuedAt",request.at("issuedAt")},{"expiresAt",request.at("expiresAt")},{"gatewayReason",status.at("reason")},{"gatewayObservedAt",status.at("gatewayObservedAt")},{"activeRecommendation",status.at("activeRecommendation")},{"activeReasonCode",status.at("activeReasonCode")},{"activeUntil",status.at("activeUntil")}};
  if(request.object().count("recommendation"))content["recommendation"]=request.at("recommendation");

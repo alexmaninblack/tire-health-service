@@ -44,8 +44,15 @@ Runtime::Runtime(std::filesystem::path state,std::filesystem::path outbox,Metada
   }
  }
 }
-std::optional<Episode> Runtime::ingest(const Frame& frame){std::lock_guard<std::mutex> lock(mutex_);if(store_&&reset_pending(store_->state()))return std::nullopt;return engine_.ingest(frame);}
-void Runtime::disconnect(){std::lock_guard<std::mutex> lock(mutex_);telemetry_at_=-1;engine_.abort("INCOMPLETE_SOURCE_GAP");}
+std::optional<Episode> Runtime::ingest(const Frame& frame){
+ std::lock_guard<std::mutex> lock(mutex_);function_.input("CONNECTED","RECEIVING","NONE");
+ if(store_&&reset_pending(store_->state())){function_.activity("WAITING","RESET");return std::nullopt;}
+ const auto episode=engine_.ingest(frame);
+ if(episode)function_.activity("SKIPPED","INSUFFICIENT_SAMPLES",episode->id);
+ else function_.activity(engine_.active()?"ACTIVE":"WAITING",engine_.active()?"NONE":"NOT_QUALIFIED",engine_.activity_id());
+ return episode;
+}
+void Runtime::disconnect(){std::lock_guard<std::mutex> lock(mutex_);telemetry_at_=-1;engine_.abort("INCOMPLETE_SOURCE_GAP");function_.interruption("SOURCE_DISCONTINUITY");function_.input("DISCONNECTED","DISCONNECTED","TRANSPORT_LOST");}
 void Runtime::stop(){std::lock_guard<std::mutex> lock(mutex_);telemetry_at_=-1;engine_.abort("ABORTED_SERVICE_STOP");}
 void Runtime::update_vdp_metadata(const Metadata& m) {
  std::lock_guard<std::mutex> lock(mutex_);
@@ -71,7 +78,7 @@ void Runtime::function_status(const std::string& reason,std::int64_t now,const s
  store_->commit(store_->state(),{Json{msg}});reason_=reason;status_at_=now;
 }
 std::optional<Pending> Runtime::next_message(){std::lock_guard<std::mutex> lock(mutex_);return store_?store_->pending():std::nullopt;}
-bool Runtime::accept(const Pending& p,const HttpResponse& r){std::lock_guard<std::mutex> lock(mutex_);return store_&&store_->acknowledge(p,r);}
+bool Runtime::accept(const Pending& p,const HttpResponse& r){std::lock_guard<std::mutex> lock(mutex_);const bool accepted=store_&&store_->acknowledge(p,r);function_.delivery(accepted,r.status,r.body);return accepted;}
 bool Runtime::apply_episode(const Features& features,const Episode& episode,const std::string& model_digest) {
  std::lock_guard<std::mutex> lock(mutex_);if(!store_||reset_pending(store_->state())||!is_sha256(model_digest)||(episode.terminal!="COMPLETE"&&episode.terminal!="TRUNCATED_MAX_DURATION"))return false;
  auto next=store_->state().object();auto model=read_model(next.at("model"));
@@ -94,7 +101,10 @@ bool Runtime::apply_episode(const Features& features,const Episode& episode,cons
   next["lastRequestMetadata"]=metadata_binding(metadata_);
   next["nextAdvisorySequence"]=n(sequence+1);next["model"]=write_model(model,model_digest,Json{next});next["gatewayStates"]=Json{Json::Array{}};advisory_sent_=false;refresh_at_=episode.ended;last_write_=-1;
  }
- return store_->commit(Json{next},messages);
+ const bool committed=store_->commit(Json{next},messages);
+ function_.activity(committed?"COMPLETED":"SKIPPED",committed?"NONE":"STORAGE_UNAVAILABLE",episode.id);
+ if(committed&&!messages.empty())function_.result("ASSESSMENT",message.at("assessmentId").string(),message.at("sourceEventTime").string(),metadata_.service_version);
+ return committed;
 }
 std::optional<std::string> Runtime::next_advisory(std::int64_t now) {
  std::lock_guard<std::mutex> lock(mutex_);if(!store_)return std::nullopt;
@@ -110,16 +120,16 @@ std::optional<std::string> Runtime::next_advisory(std::int64_t now) {
    next["lastRequestMetadata"]=metadata_binding(metadata_);next["nextAdvisorySequence"]=n(sequence+1);
    next["gatewayStates"]=Json{Json::Array{}};store_->commit(Json{next},{});refresh_at_=now;
   }
-  last_write_=now;return canonical(next.at("lastRequest"));
+  last_write_=now;function_.advisory("WAITING",next.at("lastRequest").at("requestId").string());return canonical(next.at("lastRequest"));
  }
  auto next=store_->state().object();const auto model=read_model(next.at("model"));if(model.band==Band::NotEvaluated)return std::nullopt;
- if(!std::holds_alternative<std::nullptr_t>(next.at("lastRequest").value)&&refresh_at_>=0&&now-refresh_at_<20000){if(!advisory_sent_ && (last_write_<0 || now-last_write_>=1000)){last_write_=now;return canonical(next.at("lastRequest"));}return std::nullopt;}
+ if(!std::holds_alternative<std::nullptr_t>(next.at("lastRequest").value)&&refresh_at_>=0&&now-refresh_at_<20000){if(!advisory_sent_ && (last_write_<0 || now-last_write_>=1000)){last_write_=now;function_.advisory("WAITING",next.at("lastRequest").at("requestId").string());return canonical(next.at("lastRequest"));}return std::nullopt;}
  if(model.band==Band::Good && (advisory_sent_ || std::holds_alternative<std::nullptr_t>(next.at("lastRequest").value)))return std::nullopt;
  const auto sequence=next.at("nextAdvisorySequence").integer();
  const auto request=advisory_request(metadata_,next.at("producerEpoch").string(),sequence,model.last_assessment,model.band,now);
  next["lastRequestMetadata"]=metadata_binding(metadata_);
  next["nextAdvisorySequence"]=n(sequence+1);next["lastRequest"]=request;next["gatewayStates"]=Json{Json::Array{}};next["model"].value=write_model(model,next.at("model").at("modelConfigSha256").string(),Json{next}).value;
- store_->commit(Json{next},{});refresh_at_=now;last_write_=now;advisory_sent_=false;return canonical(request);
+ store_->commit(Json{next},{});refresh_at_=now;last_write_=now;advisory_sent_=false;function_.advisory("WAITING",request.at("requestId").string());return canonical(request);
 }
 void Runtime::gateway_status(const std::string& bytes,std::int64_t now) {
  std::lock_guard<std::mutex> lock(mutex_);if(!store_||std::holds_alternative<std::nullptr_t>(store_->state().at("lastRequest").value))return;
@@ -128,6 +138,11 @@ void Runtime::gateway_status(const std::string& bytes,std::int64_t now) {
  // Normal next_advisory() creates a newly bound request using the same epoch.
  if(!store_->state().object().count("lastRequestMetadata"))return;
  const auto status=parse_json(bytes,4096),request=store_->state().at("lastRequest");
+ validate_gateway_status(status);
+ // A retained or superseded ACK is not a reply to the current request. It
+ // cannot alter the model, readiness, reset outcome, outbox or sequence.
+ for(const auto* field:{"requestId","producerEpoch","sequence"})
+  if(canonical(request.at(field))!=canonical(status.at(field)))return;
  const auto fact=advisory_fact(parse_metadata_binding(store_->state().at("lastRequestMetadata")),request,status,now);
  if(store_->state().object().count("demoReset")&&request.at("decisionId").string()==store_->state().at("demoReset").at("command").at("commandId").string()) {
   if(!reset_pending(store_->state()))return;
@@ -139,11 +154,12 @@ void Runtime::gateway_status(const std::string& bytes,std::int64_t now) {
   ack["commandId"]=reset.at("command").at("commandId");ack["result"]=s("CLEARED");
   ack["clearRequest"]=request;ack["gatewayStatus"]=status;reset["ack"]=Json{ack};
   next["demoReset"]=Json{reset};next["gatewayStates"]=Json{Json::Array{s("CLEARED")}};
-  store_->commit(Json{next},{});advisory_sent_=true;return;
+  store_->commit(Json{next},{});advisory_sent_=true;function_.advisory("CONFIRMED",request.at("requestId").string());return;
  }
  auto next=store_->state().object();auto states=std::get<Json::Array>(next.at("gatewayStates").value);const auto current=status.at("state").string();
  if(std::any_of(states.begin(),states.end(),[&](const Json& v){return v.string()==current;}))return;
  states.push_back(s(current));next["gatewayStates"]=Json{states};store_->commit(Json{next},{fact});
+ function_.advisory(current=="APPLIED"||current=="CLEARED"?"CONFIRMED":current=="RECEIVED"?"WAITING":"UNAVAILABLE",request.at("requestId").string());
  if(current=="APPLIED"||current=="CLEARED"||current=="REJECTED"||current=="FAILED")advisory_sent_=true;
 }
 std::optional<std::string> Runtime::demo_control_poll() {
@@ -177,6 +193,7 @@ void Runtime::demo_control_command(const std::string& bytes,std::int64_t now) {
  next["lastRequest"]=advisory_request(metadata_,next.at("producerEpoch").string(),sequence,command.at("commandId").string(),Band::Good,now);
  next["lastRequestMetadata"]=metadata_binding(metadata_);next["nextAdvisorySequence"]=n(sequence+1);next["gatewayStates"]=Json{Json::Array{}};
  store_->commit(Json{next},{});engine_=EpisodeEngine{};refresh_at_=now;last_write_=-1;advisory_sent_=false;
+ function_.activity("WAITING","RESET");
 }
 std::optional<std::string> Runtime::demo_control_ack(std::int64_t now) {
  std::lock_guard<std::mutex> lock(mutex_);if(!store_||!store_->state().object().count("demoReset"))return std::nullopt;
@@ -201,5 +218,22 @@ void Runtime::demo_control_accepted(const std::string& bytes) {
 std::string Runtime::advisory_readiness(std::int64_t now) {
  std::lock_guard<std::mutex> lock(mutex_);
  return canonical(Json{Json::Object{{"schemaVersion",n(1)},{"ready",Json{static_cast<bool>(store_)&&telemetry_at_>=0&&now>=telemetry_at_&&now-telemetry_at_<=5000}},{"observedAt",s(utc_timestamp(now))}}});
+}
+std::optional<Json> Runtime::observation_binding() {
+ std::lock_guard<std::mutex> lock(mutex_);if(!metadata_.service_instance)return std::nullopt;
+ return Json{Json::Object{{"messageType",s("TIRE_FUNCTION_OBSERVATION")},{"unitSystemUid",s(metadata_.unit_system_uid)},
+  {"unitRole",s(metadata_.unit_role)},{"serviceVersion",s(metadata_.service_version)},{"serviceProfile",s("v1")},
+  {"serviceInstance",parse_json(service_instance_json(*metadata_.service_instance))}}};
+}
+Json Runtime::function_observation(){
+ std::lock_guard<std::mutex> lock(mutex_);return function_.snapshot(store_?store_->queued():0,!store_);
+}
+void Runtime::input_observation(const std::string& connection,const std::string& state,const std::string& reason) {
+ std::lock_guard<std::mutex> lock(mutex_);
+ if(state!="RECEIVING")function_.interruption(reason=="REAUTHENTICATING"?"REAUTHENTICATING":"SOURCE_DISCONTINUITY");
+ function_.input(connection,state,reason);
+}
+void Runtime::advisory_observation(const std::string& state){
+ std::lock_guard<std::mutex> lock(mutex_);function_.advisory(state);
 }
 } // namespace tire_health

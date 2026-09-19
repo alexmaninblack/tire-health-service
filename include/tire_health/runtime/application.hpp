@@ -15,6 +15,8 @@ NativeServiceInputs parse_service_inputs(const std::string& release_bytes, const
 void initialize_service_inputs(ApplicationInputs& inputs);
 Metadata parse_metadata(const std::string& bytes, const NativeServiceInputs& native);
 Metadata runtime_metadata(const ApplicationInputs& inputs, const std::string& bytes);
+// Missing initial public inputs are retryable; malformed inputs/identity are not.
+std::optional<Metadata> initial_runtime_metadata(const ApplicationInputs& inputs);
 ServiceInstance parse_service_instance(const Json& value);
 Json metadata_binding(const Metadata& metadata);
 Metadata parse_metadata_binding(const Json& value);

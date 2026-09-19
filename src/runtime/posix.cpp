@@ -94,6 +94,27 @@ std::string read_file(const std::filesystem::path& path, std::size_t limit) {
     }
     return result;
 }
+std::optional<std::string> read_optional_public_file(const std::filesystem::path& path, std::size_t limit) {
+    // Absence is not malformed trust, an unsafe leaf, or a blocking FIFO.
+    Fd file{::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
+    if (file.value < 0 && errno == ENOENT) return std::nullopt;
+    struct stat info{};
+    if (file.value < 0 || ::fstat(file.value, &info) != 0 || !S_ISREG(info.st_mode) ||
+        info.st_size <= 0 || static_cast<std::uint64_t>(info.st_size) > limit)
+        throw std::runtime_error("INPUT_FILE_UNAVAILABLE");
+    std::string result;
+    char bytes[4096];
+    for (;;) {
+        const auto count = ::read(file.value, bytes, sizeof(bytes));
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0) throw std::runtime_error("INPUT_FILE_UNAVAILABLE");
+        if (count == 0) break;
+        result.append(bytes, static_cast<std::size_t>(count));
+        if (result.size() > limit) throw std::runtime_error("INPUT_FILE_UNAVAILABLE");
+    }
+    if (result.empty()) throw std::runtime_error("INPUT_FILE_UNAVAILABLE");
+    return result;
+}
 void atomic_private_file(const std::filesystem::path& path, const std::string& bytes) {
     struct stat info{};
     if (::lstat(path.parent_path().c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::geteuid() || (info.st_mode & 0777) != 0700) throw std::runtime_error("TOKEN_DIRECTORY_INVALID");

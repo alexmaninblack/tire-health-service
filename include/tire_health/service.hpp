@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "tire_health/state.hpp"
+#include "tire_health/runtime/function_observation.hpp"
 #include <memory>
 namespace tire_health {
 class Runtime {
@@ -24,9 +25,14 @@ public:
  void demo_control_accepted(const std::string& response);
  std::string advisory_readiness(std::int64_t now);
  bool state_ready() const {return static_cast<bool>(store_);}
+ std::optional<runtime::Json> observation_binding();
+ runtime::Json function_observation();
+ void input_observation(const std::string& connection,const std::string& state,const std::string& reason);
+ void advisory_observation(const std::string& state);
 private:
  std::unique_ptr<StateStore> store_; runtime::Metadata metadata_; EpisodeEngine engine_; std::mutex mutex_;
  std::string reason_;std::int64_t status_at_=-1,refresh_at_=-1,last_write_=-1;bool advisory_sent_{};
  std::int64_t telemetry_at_=-1;
+ aosedge::FunctionFacts<runtime::ObservationCodec> function_{true};
 };
 } // namespace tire_health
