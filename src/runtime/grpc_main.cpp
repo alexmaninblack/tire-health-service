@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "tire_health/runtime/application.hpp"
 #include "tire_health/runtime/session_reconnect.hpp"
+#include "tire_health/runtime/readiness_publication.hpp"
 #include "tire_health/runtime/json.hpp"
 #include "tire_health/service.hpp"
 #include "kuksa/val/v1/val.grpc.pb.h"
@@ -216,7 +217,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     runtime.input_observation("CONNECTED","WAITING","AWAITING_INPUT");
     log.state("VDP_COMPATIBILITY_CHANGED", "READY", "NONE");
     std::thread advisory([&] {
-        std::int64_t next_readiness=0;
+        ReadinessPublication readiness;
         while(!finished && !stop && !interrupted && !invalid) {
             try {
                 const auto bytes=runtime.next_advisory(wall_milliseconds());
@@ -231,15 +232,21 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
                     log.state("ADVISORY_REQUESTED","REQUESTED","NONE");
                     {std::lock_guard<std::mutex> lock(context_mutex);advisory_context.reset();}
                 }
-                if(boot_milliseconds()>=next_readiness) {
+                const auto readiness_value=runtime.advisory_readiness(wall_milliseconds());
+                const bool ready=parse_json(readiness_value).at("ready").boolean();
+                if(readiness.due(ready,boot_milliseconds())) {
                     auto context=std::make_shared<grpc::ClientContext>();context->AddMetadata("authorization","Bearer "+token);
                     context->set_deadline(std::chrono::system_clock::now()+std::chrono::seconds(2));
                     {std::lock_guard<std::mutex> lock(context_mutex);advisory_context=context;if(invalid)context->TryCancel();}
                     val::SetRequest request;val::SetResponse response;auto* update=request.add_updates();update->mutable_entry()->set_path(readiness_path);
-                    update->mutable_entry()->mutable_actuator_target()->set_string(runtime.advisory_readiness(wall_milliseconds()));
-                    update->add_fields(val::FIELD_ACTUATOR_TARGET);(void)stub->Set(context.get(),request,&response);
+                    update->mutable_entry()->mutable_actuator_target()->set_string(readiness_value);
+                    update->add_fields(val::FIELD_ACTUATOR_TARGET);
+                    const auto outcome=stub->Set(context.get(),request,&response);
+                    const bool accepted=outcome.ok() && !response.has_error() && !response.errors_size();
                     {std::lock_guard<std::mutex> lock(context_mutex);advisory_context.reset();}
-                    next_readiness=boot_milliseconds()+5000;
+                    readiness.completed(ready,boot_milliseconds(),accepted);
+                    log.state("ADVISORY_READINESS_PUBLICATION",accepted?(ready?"READY":"NOT_READY"):"FAILED",
+                        accepted?"NONE":"KUKSA_SET_NOT_ACCEPTED");
                 }
             } catch (...) {runtime.advisory_observation("UNAVAILABLE");log.state("ADVISORY_STATUS_CHANGED","UNAVAILABLE","ADVISORY_UNAVAILABLE");}
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
