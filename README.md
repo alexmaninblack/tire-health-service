@@ -1,9 +1,20 @@
 <!-- SPDX-FileCopyrightText: 2026 maninblack -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Tire Health service — source integration candidate
+# Tire Health service
 
-## Temporary Test-only lifecycle mode
+## Current integration evidence — 23 September 2026
+
+Normal packages use native Aos identity/permissions and real KUKSA inputs.
+ARM64 build, live model results, correlated local advisory, independent Reset
+and offline/backlog delivery have scoped staging evidence in the integration
+[current baseline](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
+The latest readiness correction was qualified as Tire44/V1 with VDP98/V3 and
+Brake78/V3; see the [bounded readiness receipt](../aosedge-sdv-demo/docs/qualification/advisory-readiness-renewal-2026-09-20.md).
+These observations do not close full P8, independent model calibration or the
+complete negative/crash matrix. They are dated evidence, not current VM status.
+
+## Historical opt-in Test-only lifecycle mode
 
 The explicit final bootstrap argument `--demo-no-telemetry` is a temporary
 Cloud-permissions workaround accepted on 11 September 2026. It validates native
@@ -31,7 +42,12 @@ Common JSON/hash/UUID/bootstrap/transport primitives were adapted from Brake
 `6fb8e02`; Tire product logic, identity, producer epoch, storage, backend and
 resource paths are independent.
 
-## Implemented and unqualified boundaries
+## Historical source-integration checklist
+
+This table records the original source-only boundary. Its ARM64/live input and
+advisory gaps were subsequently addressed by the scoped evidence above; complete
+qualification and calibration remain open. Do not use this table as current
+deployment status.
 
 | Implemented source | Not yet established |
 | --- | --- |
@@ -49,7 +65,7 @@ active samples with any wheel at absolute longitudinal slip >=0.08 or lateral
 slip angle >=4 degrees. The product now extracts those real-input features;
 the internal normalized-feature seam is not an operator endpoint. Invalid or
 incomplete episodes never fabricate an assessment, GOOD state or advisory.
-Live real-input/advisory qualification remains required.
+Broader real-input/advisory qualification remains required beyond those receipts.
 
 ## Exact runtime/package inputs
 
@@ -80,8 +96,8 @@ Private-session source implements
 [ADR 0015](../aosedge-sdv-demo/docs/architecture/decisions/0015-use-native-aos-service-runtime-inputs.md)
 without an SM patch. Native input readers and all four revision-2 product
 message kinds now pass host tests and offline backend conformance. Package
-assembly/public projection, boot ordering and ARM64/live proof remain pending;
-do not publish this source checkpoint as a qualified runtime.
+assembly/public projection, boot ordering and ARM64/live proof have later scoped
+integration evidence above; no blanket runtime qualification is implied.
 
 The public reader accepts exactly five keys: `schemaVersion: 2`,
 `unitSystemUid`, `unitRole`, `vdpContractVersion` and
@@ -122,7 +138,8 @@ model/state persistence. Unknown/corrupt state remains intact and held
 yet complete. Ordinary restart preserves producer epoch/sequence.
 
 Package requests: `instances.minInstances: 1`, `offlineTTL: P7D`, 150 DMIPS,
-RAM 16 MiB, storage 4 MiB, state 2 MiB, tmp 2 MiB, 32 files and 8 PIDs. These
+RAM 16 MiB, storage 4 MiB, state 2 MiB, tmp 2 MiB, 1024 files and 16 PIDs,
+as recorded in the current Solution product profile. These
 are requests to AosCore, not measurements. Packaging/signing/upload and all
 live operations belong to Demo Control, not a new wrapper in this repository.
 
@@ -168,8 +185,9 @@ installed and must not be put into the service image.
    API, caller-chosen shell/intensity/duration, or CPU worker is enabled.
 3. Complete physical corrupt-state quarantine, replacement epoch rotation,
    crash-point matrix and readiness/overflow publication integration.
-4. Build/run real ARM64 gRPC through Demo Control and test resource/KAC/TLS
-   boundaries, metadata renewal and independent delivery on Test.
+4. Complete the remaining negative resource/KAC/TLS, renewal and independent
+   delivery matrix on Test. Real ARM64 builds and bounded positive live checks
+   already have the dated evidence linked above; do not treat them as unstarted.
 5. Run accepted calibration, fresh-state classification, live advisory,
    disconnect/restart and AosCore CPU-isolation qualification. Host tests and
    backend receipts cannot substitute for those observations.
