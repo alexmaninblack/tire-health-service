@@ -3,14 +3,17 @@
 
 # Tire Health service
 
-## Current integration evidence — 23 September 2026
+## Current integration evidence — 24 September 2026
 
 Normal packages use native Aos identity/permissions and real KUKSA inputs.
 ARM64 build, live model results, correlated local advisory, independent Reset
 and offline/backlog delivery have scoped staging evidence in the integration
 [current baseline](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
-The latest readiness correction was qualified as Tire44/V1 with VDP98/V3 and
-Brake78/V3; see the [bounded readiness receipt](../aosedge-sdv-demo/docs/qualification/advisory-readiness-renewal-2026-09-20.md).
+The current demo-v1.1 / Factory39 receipt uses Tire49/V1 with VDP117/V3 and
+Brake92/V3. It covers [retained ignition state](../aosedge-sdv-demo/docs/qualification/factory-39-ignition-2026-09-24.md)
+and [offline local work and replay](../aosedge-sdv-demo/docs/qualification/factory-39-offline-2026-09-24.md).
+The earlier [readiness receipt](../aosedge-sdv-demo/docs/qualification/advisory-readiness-renewal-2026-09-20.md)
+is historical scoped evidence, not current version authority.
 These observations do not close full P8, independent model calibration or the
 complete negative/crash matrix. They are dated evidence, not current VM status.
 
@@ -26,8 +29,8 @@ It is never selected automatically when authorization fails.
 
 Build, package and publish through Demo Control. Preparation requires both
 `--without-permissions --demo-no-telemetry`; this explicit package mode also
-requests `noFileLimit: 1024` for native container construction. Normal bootstrap
-authorization and normal package contracts remain unchanged.
+requests `noFileLimit: 1024` for native container construction. Normal packages
+also request 1024 files and 16 PIDs; these are bounds, not measured usage.
 
 Independent Function Team 2 C++17 service for the AosEdge SDV demo. This is not
 a production diagnostic or a qualified P7 artifact. It does not infer tread
@@ -177,9 +180,9 @@ installed and must not be put into the service image.
 
 ## Explicit remaining gates
 
-1. Agree raw wheel-dispersion/reference arithmetic and strict versus inclusive
-   persistence thresholds; normalized fixtures alone cannot define extraction.
-   Calibrate and freeze configuration before acceptance.
+1. The 16 September raw-input arithmetic above is accepted and implemented.
+   Complete and freeze the independent healthy/pre-aged calibration and 10+10
+   classification series; normalized fixtures alone are not that proof.
 2. Specify CPU proof wire messages and lease cadence. Fixed START/STOP, exact
    identity binding, one worker and 180-second ceiling are known. No guessed
    API, caller-chosen shell/intensity/duration, or CPU worker is enabled.
