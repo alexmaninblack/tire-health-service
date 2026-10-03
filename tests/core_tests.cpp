@@ -380,6 +380,13 @@ void demo_reset_tests(){
   assert(renewed.at("operation").string()=="SET"&&renewed.at("sequence").integer()>clear.at("sequence").integer());
   assert(!parse_json(runtime.advisory_readiness(now)).at("ready").boolean());
   runtime.function_status("READY",now+3000);
+  int clock_calls=0;const auto clock=[&]{++clock_calls;return now+5000;};
+  const auto clocked=parse_json(runtime.advisory_readiness(clock));
+  assert(clock_calls==1&&clocked.at("ready").boolean());
+  assert(clocked.at("observedAt").string()==utc_timestamp(now+5000));
+  assert(!parse_json(runtime.advisory_readiness([&]{return now+2999;})).at("ready").boolean());
+  assert(parse_json(runtime.advisory_readiness([&]{return now+8000;})).at("ready").boolean());
+  assert(!parse_json(runtime.advisory_readiness([&]{return now+8001;})).at("ready").boolean());
   assert(parse_json(runtime.advisory_readiness(now+5000)).at("ready").boolean());
   assert(!parse_json(runtime.advisory_readiness(now+9000)).at("ready").boolean());
   runtime.disconnect();assert(!parse_json(runtime.advisory_readiness(now+5000)).at("ready").boolean());

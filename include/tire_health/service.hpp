@@ -4,6 +4,7 @@
 #include "tire_health/state.hpp"
 #include "tire_health/runtime/function_observation.hpp"
 #include <memory>
+#include <functional>
 namespace tire_health {
 class Runtime {
 public:
@@ -27,6 +28,7 @@ public:
  std::optional<std::string> demo_control_ack(std::int64_t now);
  void demo_control_accepted(const std::string& response);
  std::string advisory_readiness(std::int64_t now);
+ std::string advisory_readiness(const std::function<std::int64_t()>& clock);
  bool state_ready() const {return static_cast<bool>(store_);}
  std::optional<runtime::Json> observation_binding();
  runtime::Json function_observation();

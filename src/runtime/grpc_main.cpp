@@ -23,6 +23,25 @@ using tire_health::Runtime;
 namespace val = kuksa::val::v1;
 volatile std::sig_atomic_t interrupted = 0;
 void signal_handler(int) { interrupted = 1; }
+// TLS transport carries no bearer credentials. Reuse it only for a planned
+// token replacement; every RPC below still authenticates with the new token.
+// A changed trust anchor or any non-renewal failure discards the transport.
+class SessionTransport {
+    std::string ca_;
+    std::shared_ptr<grpc::Channel> channel_;
+public:
+    std::shared_ptr<grpc::Channel> channel(const std::string& ca) {
+        if (!channel_ || ca_ != ca) {
+            grpc::SslCredentialsOptions tls; tls.pem_root_certs = ca;
+            grpc::ChannelArguments arguments;
+            arguments.SetMaxReceiveMessageSize(65536);
+            channel_ = grpc::CreateCustomChannel("Server:55555", grpc::SslCredentials(tls), arguments);
+            ca_ = ca;
+        }
+        return channel_;
+    }
+    void clear() { channel_.reset(); ca_.clear(); }
+};
 class Log {
     std::mutex mutex_;
     std::map<std::string, std::string> previous_;
@@ -148,17 +167,13 @@ void deliver(Runtime& runtime, std::atomic<bool>& stop, Log& log) {
 }
 // One context per session, watched independently of blocking gRPC calls.
 // Token loss/change cancels the subscription, including a stalled Get/Read.
-void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bool>& stop, Log& log) {
+void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bool>& stop, Log& log, SessionTransport& transport) {
     const auto metadata_bytes = read_file(inputs.metadata_file, 8192);
     runtime.update_vdp_metadata(runtime_metadata(inputs, metadata_bytes));
     const auto ca = read_file(inputs.ca_file, 65536);
     const auto token_file = token_file_from_environment();
     const auto token = read_private_token(token_file);
-    grpc::SslCredentialsOptions tls; tls.pem_root_certs = ca;
-    grpc::ChannelArguments arguments;
-    arguments.SetMaxReceiveMessageSize(65536);
-    auto channel = grpc::CreateCustomChannel("Server:55555", grpc::SslCredentials(tls), arguments);
-    auto stub = val::VAL::NewStub(channel);
+    auto stub = val::VAL::NewStub(transport.channel(ca));
     std::mutex context_mutex;
     std::shared_ptr<grpc::ClientContext> active, advisory_context;
     std::atomic<bool> invalid{false}, finished{false};
@@ -230,7 +245,7 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
                     log.state("ADVISORY_REQUESTED","REQUESTED","NONE");
                     {std::lock_guard<std::mutex> lock(context_mutex);advisory_context.reset();}
                 }
-                const auto readiness_value=runtime.advisory_readiness(wall_milliseconds());
+                const auto readiness_value=runtime.advisory_readiness(wall_milliseconds);
                 const bool ready=parse_json(readiness_value).at("ready").boolean();
                 if(readiness.due(ready,boot_milliseconds())) {
                     auto context=std::make_shared<grpc::ClientContext>();context->AddMetadata("authorization","Bearer "+token);
@@ -316,14 +331,16 @@ int main(int argc, char** argv) {
         std::thread delivery([&] { deliver(runtime, stop, log); });
         struct Join { std::atomic<bool>& stop; std::thread& thread; ~Join() { stop = true; thread.join(); } } join{stop, delivery};
         log.state("SERVICE_STARTED", "RUNNING", "NONE");
+        SessionTransport transport;
         while (!interrupted) {
-            try { subscribe(runtime, inputs, stop, log); }
+            try { subscribe(runtime, inputs, stop, log, transport); transport.clear(); }
             catch (const ReauthenticationRequired&) {
                 runtime.reauthenticate();
                 log.state("KUKSA_CONNECTION_CHANGED", "REAUTHENTICATING", "TOKEN_REPLACED");
                 continue; // No synthetic assessment/ACK or access claim during renewal.
             }
             catch (const std::exception& error) {
+                transport.clear();
                 runtime.disconnect();
                 const std::string code = error.what();
                 const auto observation = subscription_failure_observation(code);

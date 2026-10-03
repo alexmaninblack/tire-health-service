@@ -6,6 +6,32 @@ from pathlib import Path
 
 
 class SubscribeContractTests(unittest.TestCase):
+    def test_transport_retention_never_reuses_rpc_authorization(self):
+        source = (Path(__file__).resolve().parents[1] / "src/runtime/grpc_main.cpp").read_text()
+        transport = source.split("class SessionTransport", 1)[1].split("class Log", 1)[0]
+        self.assertIn("!channel_ || ca_ != ca", transport)
+        self.assertNotIn("token", transport)
+        self.assertNotIn("AddMetadata", transport)
+        subscription = source.split("void subscribe(", 1)[1].split("int main(", 1)[0]
+        self.assertIn("read_private_token(token_file)", subscription)
+        self.assertIn('AddMetadata("authorization", "Bearer " + token)', subscription)
+        self.assertIn("verify_metadata(response);", subscription)
+        main = source.split("int main(", 1)[1]
+        renewal = main.split("catch (const ReauthenticationRequired&)", 1)[1].split("catch (const std::exception&", 1)[0]
+        self.assertNotIn("transport.clear()", renewal)
+        self.assertIn("transport.clear();", main.split("catch (const std::exception&", 1)[1])
+        self.assertIn("subscribe(runtime, inputs, stop, log, transport); transport.clear();", main)
+
+    def test_readiness_clock_is_sampled_after_ingest_lock(self):
+        root = Path(__file__).resolve().parents[1]
+        grpc = (root / "src/runtime/grpc_main.cpp").read_text()
+        runtime = (root / "src/runtime.cpp").read_text()
+        self.assertIn("runtime.advisory_readiness(wall_milliseconds);", grpc)
+        clocked = runtime.split("Runtime::advisory_readiness(const std::function", 1)[1].split("Runtime::observation_binding", 1)[0]
+        self.assertLess(clocked.index("lock(mutex_)"), clocked.index("const auto now=clock();"))
+        self.assertIn("now>=telemetry_at_", clocked)
+        self.assertIn("now-telemetry_at_<=5000", clocked)
+
     def test_subscription_failures_use_the_tested_observation_mapping(self):
         source = (Path(__file__).resolve().parents[1] / "src/runtime/grpc_main.cpp").read_text()
         self.assertIn("const auto observation = subscription_failure_observation(code);", source)

@@ -122,6 +122,27 @@ accepted Tire service configuration, then owns signing/publication. Product
 compilation is neither publication nor functional acceptance. The operator
 approved the exact raw-feature extraction formulas on 16 September 2026;
 the runtime now applies that model rather than `MODEL_CONTRACT_UNRESOLVED`.
+
+## Renewal continuity qualification
+
+Planned token replacement preserves an in-progress episode only while the
+unchanged source-time and 250-ms monotonic input-expiry checks remain satisfied.
+It cancels the old RPC, reads the replacement private token, validates metadata
+again and creates new authenticated RPCs. The verified TLS channel alone may
+survive this planned renewal; it contains no bearer credentials. A changed CA
+or any non-renewal failure discards that channel. Token loss, authorization
+failure and genuine input gaps remain fail-closed.
+
+Readiness samples its wall clock after acquiring the input mutex, avoiding a
+false future-time comparison against a frame accepted while waiting. The
+future-time and 5000-ms advisory guards are unchanged.
+
+On 3 October 2026 a retained-M1 transient proof at the signed 600-DMIPS
+candidate budget ran for 420.613 seconds without input/advisory NOT_READY
+transitions. A natural token renewal occurred during a Tire episode that
+completed and reached the backend. This bounded proof does not close native
+SOTA, restart, CPU-isolation or complete installed-kit qualification.
+
 This source closure does not qualify live analytics, calibration, readiness
 or resource usage. Actual ARM64 compilation, KAC/TLS,
 subscriptions, renewal, native mounts, recovery and backend records require

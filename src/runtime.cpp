@@ -239,7 +239,12 @@ void Runtime::demo_control_accepted(const std::string& bytes) {
  reset["delivered"]=Json{true};next["demoReset"]=Json{reset};store_->commit(Json{next},{});
 }
 std::string Runtime::advisory_readiness(std::int64_t now) {
+ return advisory_readiness([now]{return now;});
+}
+std::string Runtime::advisory_readiness(const std::function<std::int64_t()>& clock) {
  std::lock_guard<std::mutex> lock(mutex_);
+ // A caller timestamp sampled before this lock can precede a newer frame.
+ const auto now=clock();
  return canonical(Json{Json::Object{{"schemaVersion",n(1)},{"ready",Json{static_cast<bool>(store_)&&telemetry_at_>=0&&now>=telemetry_at_&&now-telemetry_at_<=5000}},{"observedAt",s(utc_timestamp(now))}}});
 }
 std::optional<Json> Runtime::observation_binding() {
