@@ -45,15 +45,28 @@ Runtime::Runtime(std::filesystem::path state,std::filesystem::path outbox,Metada
  }
 }
 std::optional<Episode> Runtime::ingest(const Frame& frame){
+ return ingest(frame,boot_milliseconds());
+}
+std::optional<Episode> Runtime::ingest(const Frame& frame,std::int64_t received_mono){
  std::lock_guard<std::mutex> lock(mutex_);function_.input("CONNECTED","RECEIVING","NONE");
+ input_mono_=received_mono;
+ if(!store_){function_.activity("SKIPPED","STORAGE_UNAVAILABLE");return std::nullopt;}
  if(store_&&reset_pending(store_->state())){function_.activity("WAITING","RESET");return std::nullopt;}
  const auto episode=engine_.ingest(frame);
- if(episode)function_.activity("SKIPPED","INSUFFICIENT_SAMPLES",episode->id);
+ if(episode)function_.activity("SKIPPED",episode->terminal=="INCOMPLETE_SOURCE_GAP"?"SOURCE_DISCONTINUITY":"INSUFFICIENT_SAMPLES",episode->id);
  else function_.activity(engine_.active()?"ACTIVE":"WAITING",engine_.active()?"NONE":"NOT_QUALIFIED",engine_.activity_id());
  return episode;
 }
-void Runtime::disconnect(){std::lock_guard<std::mutex> lock(mutex_);telemetry_at_=-1;engine_.abort("INCOMPLETE_SOURCE_GAP");function_.interruption("SOURCE_DISCONTINUITY");function_.input("DISCONNECTED","DISCONNECTED","TRANSPORT_LOST");}
-void Runtime::stop(){std::lock_guard<std::mutex> lock(mutex_);telemetry_at_=-1;engine_.abort("ABORTED_SERVICE_STOP");}
+bool Runtime::expire_input(std::int64_t observed_mono){
+ std::lock_guard<std::mutex> lock(mutex_);
+ // A delayed timeout decision must not discard a newer accepted input.
+ if(input_mono_<0 || observed_mono-input_mono_<=250)return false;
+ input_mono_=-1;telemetry_at_=-1;engine_.abort("INCOMPLETE_SOURCE_GAP");
+ function_.interruption("SOURCE_DISCONTINUITY");function_.input("CONNECTED","STALE","SOURCE_GAP");
+ return true;
+}
+void Runtime::disconnect(){std::lock_guard<std::mutex> lock(mutex_);input_mono_=-1;telemetry_at_=-1;engine_.abort("INCOMPLETE_SOURCE_GAP");function_.interruption("SOURCE_DISCONTINUITY");function_.input("DISCONNECTED","DISCONNECTED","TRANSPORT_LOST");}
+void Runtime::stop(){std::lock_guard<std::mutex> lock(mutex_);input_mono_=-1;telemetry_at_=-1;engine_.abort("ABORTED_SERVICE_STOP");}
 void Runtime::update_vdp_metadata(const Metadata& m) {
  std::lock_guard<std::mutex> lock(mutex_);
  if(m.unit_system_uid!=metadata_.unit_system_uid||m.unit_role!=metadata_.unit_role||m.service_version!=metadata_.service_version||m.service_artifact_sha256!=metadata_.service_artifact_sha256||m.service_instance!=metadata_.service_instance)throw std::invalid_argument("IMMUTABLE_IDENTITY_CHANGED");
@@ -122,9 +135,12 @@ std::optional<std::string> Runtime::next_advisory(std::int64_t now) {
   }
   last_write_=now;function_.advisory("WAITING",next.at("lastRequest").at("requestId").string());return canonical(next.at("lastRequest"));
  }
- auto next=store_->state().object();const auto model=read_model(next.at("model"));if(model.band==Band::NotEvaluated)return std::nullopt;
- if(!std::holds_alternative<std::nullptr_t>(next.at("lastRequest").value)&&refresh_at_>=0&&now-refresh_at_<20000){if(!advisory_sent_ && (last_write_<0 || now-last_write_>=1000)){last_write_=now;function_.advisory("WAITING",next.at("lastRequest").at("requestId").string());return canonical(next.at("lastRequest"));}return std::nullopt;}
- if(model.band==Band::Good && (advisory_sent_ || std::holds_alternative<std::nullptr_t>(next.at("lastRequest").value)))return std::nullopt;
+ // Most calls are idle lease checks. Copy durable state only when constructing
+ // a new request, not on every 50-ms check while holding the shared input lock.
+ const auto& current=store_->state();const auto model=read_model(current.at("model"));if(model.band==Band::NotEvaluated)return std::nullopt;
+ if(!std::holds_alternative<std::nullptr_t>(current.at("lastRequest").value)&&refresh_at_>=0&&now-refresh_at_<20000){if(!advisory_sent_ && (last_write_<0 || now-last_write_>=1000)){last_write_=now;function_.advisory("WAITING",current.at("lastRequest").at("requestId").string());return canonical(current.at("lastRequest"));}return std::nullopt;}
+ if(model.band==Band::Good && (advisory_sent_ || std::holds_alternative<std::nullptr_t>(current.at("lastRequest").value)))return std::nullopt;
+ auto next=current.object();
  const auto sequence=next.at("nextAdvisorySequence").integer();
  const auto request=advisory_request(metadata_,next.at("producerEpoch").string(),sequence,model.last_assessment,model.band,now);
  next["lastRequestMetadata"]=metadata_binding(metadata_);

@@ -140,11 +140,17 @@ model/state persistence. Unknown/corrupt state remains intact and held
 `NOT_READY_STATE`; physical quarantine and all crash-point recovery are not
 yet complete. Ordinary restart preserves producer epoch/sequence.
 
-Package requests: `instances.minInstances: 1`, `offlineTTL: P7D`, 150 DMIPS,
+Package requests: `instances.minInstances: 1`, `offlineTTL: P7D`, 300 DMIPS,
 RAM 16 MiB, storage 4 MiB, state 2 MiB, tmp 2 MiB, 1024 files and 16 PIDs,
 as recorded in the current Solution product profile. These
 are requests to AosCore, not measurements. Packaging/signing/upload and all
 live operations belong to Demo Control, not a new wrapper in this repository.
+The 3 October 2026 CPU increase from 150 is an authorized staging qualification
+candidate, not a live-accepted envelope. Input freshness remains 250 ms. Current
+corrections recover validated interrupted transactions without resetting the
+model, serialize watchdog expiry with accepted input, and avoid copying the
+whole persistent state for idle advisory-lease checks. Targeted tests cover
+replay/repeat and unsafe temporary files; they do not claim every crash cutpoint.
 
 ## Source checks and product build requirements
 

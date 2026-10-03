@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <unistd.h>
+#include <sys/stat.h>
 using namespace tire_health;
 using namespace tire_health::runtime;
 namespace {
@@ -95,6 +96,52 @@ void input_episode_tests(){
  frame.epoch_ms=1;auto gap=engine.ingest(frame);assert(gap&&gap->terminal=="INCOMPLETE_SOURCE_GAP"&&!engine.active());
 }
 void store_tests(){
+ for(const auto* leaf:{"state.json","state.sha256","commit.sha256"}) {
+  Temp t;Json saved;const auto msg=message();
+  {StateStore original(t.root/"state",t.root/"outbox","test-fixture-unit");saved=original.state();}
+  const Json txn{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"state",saved},{"messages",Json{Json::Array{msg}}}}};
+  durable_file(t.root/"state"/"transaction.json",canonical(txn));
+  durable_file(t.root/"state"/(std::string(leaf)+".next"),"interrupted bytes");
+  StateStore recovered(t.root/"state",t.root/"outbox","test-fixture-unit");
+  assert(canonical(saved)==canonical(recovered.state()));assert(recovered.queued()==1);
+  assert(!std::filesystem::exists(t.root/"state"/(std::string(leaf)+".next")));
+ }
+ for(const auto* fault:{"symlink","hardlink","mode","fifo","foreign-temporary","invalid-journal"}) {
+  Temp t;Json saved;const auto msg=message();
+  {StateStore original(t.root/"state",t.root/"outbox","test-fixture-unit");saved=original.state();}
+  auto txn=Json{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"state",saved},{"messages",Json{Json::Array{msg}}}}};
+  if(std::string(fault)=="invalid-journal"){auto changed=txn.object();changed["schemaVersion"]=Json{std::int64_t{2}};txn=Json{changed};}
+  durable_file(t.root/"state"/"transaction.json",canonical(txn));
+  const auto temporary=t.root/"outbox"/(message_key(msg)+".json.next");
+  const auto sentinel=t.root/"state"/"commit.sha256";
+  durable_file(sentinel,"preserved sentinel");
+  if(std::string(fault)=="symlink")std::filesystem::create_symlink(sentinel,temporary);
+  else if(std::string(fault)=="hardlink")std::filesystem::create_hard_link(sentinel,temporary);
+  else if(std::string(fault)=="fifo")assert(::mkfifo(temporary.c_str(),0600)==0);
+  else {
+   durable_file(temporary,"incomplete bytes");
+   if(std::string(fault)=="mode")assert(::chmod(temporary.c_str(),0644)==0);
+   if(std::string(fault)=="foreign-temporary")std::filesystem::rename(temporary,t.root/"outbox"/"unrecognized.next");
+  }
+  rejects([&]{StateStore recovered(t.root/"state",t.root/"outbox","test-fixture-unit");});
+  // Bad journal and links cannot overwrite their external target.
+  if(std::string(fault)=="symlink"||std::string(fault)=="hardlink"||std::string(fault)=="invalid-journal")
+   assert(read_file(sentinel,1024)=="preserved sentinel");
+ }
+ // Power loss after opening a derived-message temporary file must replay the
+ // already durable transaction, not abandon the model and queue on restart.
+ {
+  Temp t;Json saved;const auto msg=message();
+  {StateStore original(t.root/"state",t.root/"outbox","test-fixture-unit");saved=original.state();}
+  const Json txn{Json::Object{{"schemaVersion",Json{std::int64_t{1}}},{"state",saved},{"messages",Json{Json::Array{msg}}}}};
+  durable_file(t.root/"state"/"transaction.json",canonical(txn));
+  durable_file(t.root/"outbox"/(message_key(msg)+".json.next"),"partial interrupted bytes");
+  StateStore recovered(t.root/"state",t.root/"outbox","test-fixture-unit");
+  assert(canonical(recovered.state())==canonical(saved));assert(recovered.queued()==1);
+  assert(recovered.pending()->bytes==canonical(msg));
+  assert(!std::filesystem::exists(t.root/"state"/"transaction.json"));
+  StateStore repeated(t.root/"state",t.root/"outbox","test-fixture-unit");assert(repeated.queued()==1);
+ }
  Temp t;std::string epoch;{
  StateStore store(t.root/"state",t.root/"outbox","test-fixture-unit");epoch=store.state().at("producerEpoch").string();
  const auto msg=message();assert(store.commit(store.state(),{msg}));assert(store.queued()==1);assert(store.commit(store.state(),{msg}));assert(store.queued()==1);
@@ -108,6 +155,31 @@ void store_tests(){
  }rejects([&]{StateStore wrong(t.root/"state",t.root/"outbox","other-unit");});
 }
 void runtime_tests(){
+ {
+  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());Frame frame;frame.epoch_ms=1000;
+  assert(!runtime.expire_input(1000));runtime.ingest(frame,1000);
+  assert(!runtime.expire_input(1250));
+  frame.epoch_ms=1100;runtime.ingest(frame,1251);
+  // The old timeout was computed at 1251 against the frame at 1000, but a
+  // newer accepted input is now authoritative when the watchdog takes its lock.
+  assert(!runtime.expire_input(1251));assert(!runtime.expire_input(1501));
+  assert(runtime.expire_input(1502));assert(!runtime.expire_input(1503));
+  frame.epoch_ms=1200;runtime.ingest(frame,1600);assert(!runtime.expire_input(1502));
+  runtime.disconnect();assert(!runtime.expire_input(2000));
+  runtime.ingest(frame,2100);runtime.stop();assert(!runtime.expire_input(3000));
+ }
+ {
+  Temp t;std::filesystem::create_directories(t.root/"state");
+  ::chmod((t.root/"state").c_str(),0700);
+  durable_file(t.root/"state"/"unknown","corrupt fixture");
+  Runtime runtime(t.root/"state",t.root/"outbox",metadata());assert(!runtime.state_ready());
+  Frame frame;frame.epoch_ms=1000;assert(!runtime.ingest(frame,1000));
+  const auto facts=runtime.function_observation();
+  assert(facts.at("activity").at("state").string()=="SKIPPED");
+  assert(facts.at("activity").at("reason").string()=="STORAGE_UNAVAILABLE");
+  assert(!parse_json(runtime.advisory_readiness(1000)).at("ready").boolean());
+  assert(!runtime.next_message());
+ }
  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());assert(runtime.state_ready());const auto e=episode();assert(runtime.apply_episode({10000,10000,10000,10000},e,std::string(64,'c')));
  const auto request=runtime.next_advisory(e.ended);assert(request);const auto parsed=parse_json(*request);assert(parsed.at("recommendation").string()=="TIRE_REPLACEMENT_RECOMMENDED");
  assert(!runtime.apply_episode({0,0,0,0},e,std::string(64,'c')));
@@ -127,6 +199,10 @@ void advisory_tests(){
   auto wrong=status;wrong["producerEpoch"]=Json{random_uuid()};runtime.gateway_status(canonical(Json{wrong}),e.ended+1000);
   runtime.gateway_status(canonical(Json{status}),e.ended+1000);runtime.gateway_status(canonical(Json{status}),e.ended+2000);
   assert(!runtime.next_advisory(e.ended+3000));
+  const auto durable_before_idle=read_file(t.root/"state"/"state.json",131072);
+  for(int milliseconds=3050;milliseconds<15000;milliseconds+=50)
+   assert(!runtime.next_advisory(e.ended+milliseconds));
+  assert(read_file(t.root/"state"/"state.json",131072)==durable_before_idle);
   for(int i=0;i<3;++i){e.id=random_uuid();e.ended+=5000;runtime.apply_episode({0,0,0,0},e,std::string(64,'c'));}
   const auto clear=runtime.next_advisory(e.ended);assert(clear);assert(parse_json(*clear).at("operation").string()=="CLEAR");
  }

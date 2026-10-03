@@ -9,6 +9,8 @@ class Runtime {
 public:
  Runtime(std::filesystem::path state,std::filesystem::path outbox,runtime::Metadata);
  std::optional<Episode> ingest(const runtime::Frame&);
+ std::optional<Episode> ingest(const runtime::Frame&,std::int64_t received_mono);
+ bool expire_input(std::int64_t observed_mono);
  void disconnect();
  void stop();
  void update_vdp_metadata(const runtime::Metadata&);
@@ -33,6 +35,7 @@ private:
  std::unique_ptr<StateStore> store_; runtime::Metadata metadata_; EpisodeEngine engine_; std::mutex mutex_;
  std::string reason_;std::int64_t status_at_=-1,refresh_at_=-1,last_write_=-1;bool advisory_sent_{};
  std::int64_t telemetry_at_=-1;
+ std::int64_t input_mono_=-1;
  aosedge::FunctionFacts<runtime::ObservationCodec> function_{true};
 };
 } // namespace tire_health

@@ -11,11 +11,24 @@
 #include <sys/stat.h>
 #include <unistd.h>
 namespace tire_health::runtime {
-void durable_file(const std::filesystem::path& path,const std::string& bytes) {
+void write_durable_file(const std::filesystem::path& path,const std::string& bytes,bool replay) {
  struct stat parent{};
  if(::lstat(path.parent_path().c_str(),&parent)!=0 || !S_ISDIR(parent.st_mode) || parent.st_uid!=::geteuid() || (parent.st_mode&0777)!=0700)throw std::runtime_error("STATE_DIRECTORY_INVALID");
  const auto temporary=path.string()+".next";
- const int fd=::open(temporary.c_str(),O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW|O_CLOEXEC,0600);
+ int fd=::open(temporary.c_str(),O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW|O_CLOEXEC,0600);
+ if(fd<0 && errno==EEXIST && replay) {
+  // Only a fully validated durable journal authorizes replacing an unfinished
+  // write. Never follow links or truncate before checking the opened inode.
+  fd=::open(temporary.c_str(),O_WRONLY|O_NONBLOCK|O_NOFOLLOW|O_CLOEXEC);
+  struct stat opened{},entry{};
+  if(fd<0 || ::fstat(fd,&opened)!=0 || ::lstat(temporary.c_str(),&entry)!=0 ||
+     !S_ISREG(opened.st_mode) || opened.st_uid!=::geteuid() ||
+     (opened.st_mode&07777)!=0600 || opened.st_nlink!=1 ||
+     opened.st_dev!=entry.st_dev || opened.st_ino!=entry.st_ino || ::ftruncate(fd,0)!=0) {
+   if(fd>=0)::close(fd);
+   throw std::runtime_error("STATE_TEMPORARY_INVALID");
+  }
+ }
  if(fd<0)throw std::runtime_error("STATE_WRITE_FAILED");
  try {
   std::size_t at=0;while(at<bytes.size()){const auto n=::write(fd,bytes.data()+at,bytes.size()-at);if(n<0&&errno==EINTR)continue;if(n<=0)throw std::runtime_error("STATE_WRITE_FAILED");at+=static_cast<std::size_t>(n);}
@@ -23,6 +36,9 @@ void durable_file(const std::filesystem::path& path,const std::string& bytes) {
   const int directory=::open(path.parent_path().c_str(),O_RDONLY|O_CLOEXEC);if(directory<0)throw std::runtime_error("STATE_WRITE_FAILED");
   const int synced=::fsync(directory);::close(directory);if(synced!=0)throw std::runtime_error("STATE_WRITE_FAILED");::close(fd);
  } catch(...){::close(fd);::unlink(temporary.c_str());throw;}
+}
+void durable_file(const std::filesystem::path& path,const std::string& bytes) {
+ write_durable_file(path,bytes,false);
 }
 }
 namespace tire_health {
@@ -34,7 +50,7 @@ void directory(const std::filesystem::path& path) {
  if(::chmod(path.c_str(),0700)!=0)throw std::runtime_error("STATE_DIRECTORY_INVALID");
 }
 void private_file(const std::filesystem::path& path) {
- struct stat st{};if(::lstat(path.c_str(),&st)!=0||!S_ISREG(st.st_mode)||st.st_uid!=::geteuid()||(st.st_mode&0777)!=0600)throw std::runtime_error("STATE_FILE_INVALID");
+ struct stat st{};if(::lstat(path.c_str(),&st)!=0||!S_ISREG(st.st_mode)||st.st_uid!=::geteuid()||(st.st_mode&07777)!=0600||st.st_nlink!=1)throw std::runtime_error("STATE_FILE_INVALID");
 }
 void remove_durable(const std::filesystem::path& path) {
  if(::unlink(path.c_str())!=0 && errno!=ENOENT)throw std::runtime_error("STATE_REMOVE_FAILED");
@@ -47,8 +63,10 @@ Json initial(const std::string& uid) {
 StateStore::StateStore(std::filesystem::path state,std::filesystem::path outbox,std::string uid):root_(std::move(state)),outbox_(std::move(outbox)),uid_(std::move(uid)) {
  directory(root_);directory(outbox_);
  for(const auto& item:std::filesystem::directory_iterator(root_)) {
-  const auto name=item.path().filename().string();
-  if(name!="state.json"&&name!="state.sha256"&&name!="transaction.json"&&name!="commit.sha256")throw std::runtime_error("NOT_READY_STATE");
+ const auto name=item.path().filename().string();
+  const bool replay_temporary=std::filesystem::exists(root_/"transaction.json") &&
+   (name=="state.json.next"||name=="state.sha256.next"||name=="commit.sha256.next");
+  if(name!="state.json"&&name!="state.sha256"&&name!="transaction.json"&&name!="commit.sha256"&&!replay_temporary)throw std::runtime_error("NOT_READY_STATE");
   private_file(item.path());
  }
  if(std::filesystem::exists(root_/"transaction.json")) {
@@ -131,9 +149,9 @@ void StateStore::replay(const Json& txn) {
  const auto& next=txn.at("state");validate_state(next);
  const auto& messages=std::get<Json::Array>(txn.at("messages").value);if(messages.size()>4)throw std::runtime_error("NOT_READY_STATE");
  for(const auto& msg:messages)if(msg.at("unitSystemUid").string()!=uid_||sha256_hex(canonical(msg.at("content")))!=msg.at("contentSha256").string()||canonical(msg).size()>16384)throw std::runtime_error("NOT_READY_STATE");
- durable_file(root_/"state.json",canonical(next));durable_file(root_/"state.sha256",sha256_hex(canonical(next)));
- for(const auto& msg:messages){const auto path=outbox_/(message_key(msg)+".json");const auto bytes=canonical(msg);if(std::filesystem::exists(path)){if(read_file(path,16384)!=bytes)throw std::runtime_error("NOT_READY_STATE");}else durable_file(path,bytes);}
- durable_file(root_/"commit.sha256",sha256_hex(canonical(txn)));state_=next;
+ write_durable_file(root_/"state.json",canonical(next),true);write_durable_file(root_/"state.sha256",sha256_hex(canonical(next)),true);
+ for(const auto& msg:messages){const auto path=outbox_/(message_key(msg)+".json");const auto bytes=canonical(msg);if(std::filesystem::exists(path)){private_file(path);if(read_file(path,16384)!=bytes)throw std::runtime_error("NOT_READY_STATE");}else write_durable_file(path,bytes,true);}
+ write_durable_file(root_/"commit.sha256",sha256_hex(canonical(txn)),true);state_=next;
 }
 bool StateStore::commit(Json next,const std::vector<Json>& messages) {
  validate_state(next);validate_queue();

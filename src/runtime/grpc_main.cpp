@@ -163,7 +163,6 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     std::shared_ptr<grpc::ClientContext> active, advisory_context;
     std::atomic<bool> invalid{false}, finished{false};
     SessionInterruption interruption;
-    std::atomic<std::int64_t> last_frame{boot_milliseconds()};
     std::thread watcher([&] {
         while (!finished) {
             if (stop || interrupted) interruption.observe(SessionInputChange::Unavailable);
@@ -175,11 +174,10 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
                 if (active) active->TryCancel();
                 if (advisory_context) advisory_context->TryCancel();
             }
-            if (boot_milliseconds() - last_frame.load() > 250) {
+            {
                 try {
-                    runtime.disconnect();
-                    runtime.input_observation("CONNECTED","STALE","SOURCE_GAP");
-                    log.state("READINESS_CHANGED", "NOT_READY", "KUKSA_DATA_UNAVAILABLE");
+                    if(runtime.expire_input(boot_milliseconds()))
+                        log.state("READINESS_CHANGED", "NOT_READY", "KUKSA_DATA_UNAVAILABLE");
                 } catch (...) {
                     interruption.observe(SessionInputChange::Unavailable);
                     invalid = true;
@@ -284,11 +282,10 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
         const auto now = boot_milliseconds();
         const auto frame = complete_frame(values, wall_milliseconds());
         if (!frame || frame->epoch_ms==previous_epoch) continue;
-        const auto result = runtime.ingest(*frame);
+        const auto result = runtime.ingest(*frame,now);
         previous_epoch = frame->epoch_ms;
-        last_frame = now;
         runtime.function_status("READY",wall_milliseconds());
-        log.state("READINESS_CHANGED","READY","NONE");
+        log.state("READINESS_CHANGED",runtime.state_ready()?"READY":"NOT_READY",runtime.state_ready()?"NONE":"STORAGE_UNAVAILABLE");
         if(result) {
             const auto features=tire_health::extract_features(*result);
             const bool accepted=features && runtime.apply_episode(*features,*result,tire_health::kModelConfigSha256);
