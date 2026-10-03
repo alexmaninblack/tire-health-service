@@ -57,6 +57,13 @@ std::optional<Episode> Runtime::ingest(const Frame& frame,std::int64_t received_
  else function_.activity(engine_.active()?"ACTIVE":"WAITING",engine_.active()?"NONE":"NOT_QUALIFIED",engine_.activity_id());
  return episode;
 }
+void Runtime::reauthenticate(){
+ std::lock_guard<std::mutex> lock(mutex_);
+ // Credential replacement is not itself a missing vehicle sample. The existing
+ // source-time gap and monotonic expiry guards still reject real discontinuity.
+ function_.input("REAUTHENTICATING","WAITING","REAUTHENTICATING");
+ function_.advisory("REAUTHENTICATING");
+}
 bool Runtime::expire_input(std::int64_t observed_mono){
  std::lock_guard<std::mutex> lock(mutex_);
  // A delayed timeout decision must not discard a newer accepted input.

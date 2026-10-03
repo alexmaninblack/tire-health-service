@@ -295,10 +295,10 @@ void subscribe(Runtime& runtime, const ApplicationInputs& inputs, std::atomic<bo
     }
     stream_context->TryCancel();
     const auto stream_status = reader->Finish();
-    runtime.disconnect();
     interruption.observe(inspect_session_inputs(inputs, token_file, token, metadata_bytes, ca));
     if ((stream_status.ok() || stream_status.error_code() == grpc::StatusCode::CANCELLED) &&
         interruption.token_replaced() && !stop && !interrupted) throw ReauthenticationRequired{};
+    runtime.disconnect();
     log.state("KUKSA_CONNECTION_CHANGED", "NOT_READY", "KUKSA_DATA_UNAVAILABLE");
 }
 }
@@ -319,9 +319,7 @@ int main(int argc, char** argv) {
         while (!interrupted) {
             try { subscribe(runtime, inputs, stop, log); }
             catch (const ReauthenticationRequired&) {
-                runtime.disconnect();
-                runtime.input_observation("REAUTHENTICATING","WAITING","REAUTHENTICATING");
-                runtime.advisory_observation("REAUTHENTICATING");
+                runtime.reauthenticate();
                 log.state("KUKSA_CONNECTION_CHANGED", "REAUTHENTICATING", "TOKEN_REPLACED");
                 continue; // No synthetic assessment/ACK or access claim during renewal.
             }

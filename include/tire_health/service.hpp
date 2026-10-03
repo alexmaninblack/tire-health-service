@@ -11,6 +11,7 @@ public:
  std::optional<Episode> ingest(const runtime::Frame&);
  std::optional<Episode> ingest(const runtime::Frame&,std::int64_t received_mono);
  bool expire_input(std::int64_t observed_mono);
+ void reauthenticate();
  void disconnect();
  void stop();
  void update_vdp_metadata(const runtime::Metadata&);

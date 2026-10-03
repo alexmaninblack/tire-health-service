@@ -140,7 +140,7 @@ model/state persistence. Unknown/corrupt state remains intact and held
 `NOT_READY_STATE`; physical quarantine and all crash-point recovery are not
 yet complete. Ordinary restart preserves producer epoch/sequence.
 
-Package requests: `instances.minInstances: 1`, `offlineTTL: P7D`, 300 DMIPS,
+Package requests: `instances.minInstances: 1`, `offlineTTL: P7D`, 600 DMIPS,
 RAM 16 MiB, storage 4 MiB, state 2 MiB, tmp 2 MiB, 1024 files and 16 PIDs,
 as recorded in the current Solution product profile. These
 are requests to AosCore, not measurements. Packaging/signing/upload and all
@@ -151,6 +151,13 @@ corrections recover validated interrupted transactions without resetting the
 model, serialize watchdog expiry with accepted input, and avoid copying the
 whole persistent state for idle advisory-lease checks. Targeted tests cover
 replay/repeat and unsafe temporary files; they do not claim every crash cutpoint.
+The 300-DMIPS trial still showed short input-readiness failures. At 600 DMIPS,
+450 seconds retained fresh input, but exposed an independent planned-token
+replacement interruption. The corrected runtime preserves an in-memory episode
+only across authenticated renewal with continuous fresh data. Real gaps,
+expiry, denial, changed metadata and service stop still abort. Five native test
+suites and a 420-second transient M1 check with two successful maneuvers pass;
+native release delivery and the rebuilt Factory remain separate acceptance gates.
 
 ## Source checks and product build requirements
 

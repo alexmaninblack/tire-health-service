@@ -24,6 +24,10 @@ class SubscribeContractTests(unittest.TestCase):
         renewal = source.rsplit("catch (const ReauthenticationRequired&)", 1)[1].split("catch (const std::exception&", 1)[0]
         self.assertIn("continue;", renewal)
         self.assertNotIn("pause(", renewal)
+        self.assertIn("runtime.reauthenticate();", renewal)
+        self.assertNotIn("runtime.disconnect();", renewal)
+        finish = source.split("const auto stream_status = reader->Finish();", 1)[1].split("int main(", 1)[0]
+        self.assertLess(finish.index("throw ReauthenticationRequired{}"), finish.index("runtime.disconnect();"))
 
     def test_bad_advisory_status_does_not_report_failed_telemetry(self):
         source = (Path(__file__).resolve().parents[1] / "src/runtime/grpc_main.cpp").read_text()

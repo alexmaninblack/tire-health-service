@@ -155,6 +155,31 @@ void store_tests(){
  }rejects([&]{StateStore wrong(t.root/"state",t.root/"outbox","other-unit");});
 }
 void runtime_tests(){
+ for(const auto* mode:{"renew","source-gap","expired","disconnect","metadata-change"}) {
+  Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());
+  Frame frame;frame.values[0]=20;frame.values[2]=5;
+  for(int i=0;i<40;++i){frame.epoch_ms=1000+i*100;assert(!runtime.ingest(frame,frame.epoch_ms));}
+  const auto activity=runtime.function_observation().at("activity").at("episodeId");
+  runtime.reauthenticate();
+  assert(runtime.function_observation().at("connection").string()=="REAUTHENTICATING");
+  if(std::string(mode)=="disconnect")runtime.disconnect();
+  if(std::string(mode)=="expired")assert(runtime.expire_input(5151));
+  if(std::string(mode)=="metadata-change") {
+   auto changed=metadata();changed.vdp_contract_sha256=std::string(64,'c');
+   runtime.update_vdp_metadata(changed);
+  }
+  if(std::string(mode)=="source-gap") {
+   frame.epoch_ms=5151;const auto lost=runtime.ingest(frame,5151);
+   assert(lost&&lost->terminal=="INCOMPLETE_SOURCE_GAP");continue;
+  }
+  std::optional<Episode> done;
+  frame.values[0]=0;frame.values[2]=0;
+  for(int i=40;i<=51;++i){frame.epoch_ms=1000+i*100;auto e=runtime.ingest(frame,frame.epoch_ms);if(e)done=e;}
+  if(std::string(mode)=="renew") {
+   assert(done&&done->terminal=="COMPLETE"&&done->samples.size()>=40);
+   assert(done->id==activity.string());
+  } else assert(!done);
+ }
  {
   Temp t;Runtime runtime(t.root/"state",t.root/"outbox",metadata());Frame frame;frame.epoch_ms=1000;
   assert(!runtime.expire_input(1000));runtime.ingest(frame,1000);
