@@ -3,19 +3,22 @@
 
 # Tire Health service
 
-## Current integration evidence — 24 September 2026
+## Current integration evidence — 7 October 2026
 
-Normal packages use native Aos identity/permissions and real KUKSA inputs.
-ARM64 build, live model results, correlated local advisory, independent Reset
-and offline/backlog delivery have scoped staging evidence in the integration
-[current baseline](../aosedge-sdv-demo/docs/qualification/current-baseline.md).
-The current demo-v1.1 / Factory39 receipt uses Tire49/V1 with VDP117/V3 and
-Brake92/V3. It covers [retained ignition state](../aosedge-sdv-demo/docs/qualification/factory-39-ignition-2026-09-24.md)
-and [offline local work and replay](../aosedge-sdv-demo/docs/qualification/factory-39-offline-2026-09-24.md).
-The earlier [readiness receipt](../aosedge-sdv-demo/docs/qualification/advisory-readiness-renewal-2026-09-20.md)
-is historical scoped evidence, not current version authority.
-These observations do not close full P8, independent model calibration or the
-complete negative/crash matrix. They are dated evidence, not current VM status.
+The [Kit028 source return point](../aosedge-sdv-demo/docs/qualification/kit028-setup042-source-publication-2026-10-05.md)
+binds the current implementation. Normal packages use native Aos
+identity/permissions and real KUKSA inputs. The installed M1/Factory .41 run
+used Tire60/V1 with VDP136/V3 and Brake114/V3, proving products, advisory,
+independent Reset/history, offline backlog recovery and post-ignition products
+within the scripted sequence. This is dated evidence, not a running-VM claim.
+
+Current source includes interrupted-state recovery, input serialization and
+renewal continuity. The package requests 600 DMIPS as the authorized staging
+requalification envelope; 250-ms input freshness remains unchanged. Brief
+load-sensitive readiness is deferred, not claimed fixed. The
+[current baseline](../aosedge-sdv-demo/docs/qualification/current-baseline.md)
+retains native E2E, calibration and fault limits. Fixed-load CPU isolation is
+not implemented by raising the package's quota.
 
 ## Historical opt-in Test-only lifecycle mode
 
