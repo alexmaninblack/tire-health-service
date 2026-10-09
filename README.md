@@ -3,6 +3,26 @@
 
 # Tire Health service
 
+Independent in-vehicle Tire Health QM service, with its own model, outbox and
+advisory. It neither shares Brake state nor controls the vehicle.
+
+## SDV Lab entry
+
+For the complete demo, start at the
+[SDV Lab product repository](https://github.com/alexmaninblack/aosedge-sdv-demo).
+Operators use its prebuilt installer; developers use its pinned build route.
+This component is not a standalone installer for the whole lab. Integration
+source pins and published artifact provenance do not change when this README
+changes. Detailed historical evidence below retains its original scope.
+
+[Product build](docs/product-build.md) and
+[advisory integration](docs/advisory-demo-control.md).
+
+Local checks: [source checks](#source-checks-and-product-build-requirements)
+describe the CMake/CTest route. Select an SSD build directory instead of the
+historical temporary-path example. A host build is not a Linux ARM64 product.
+
+
 ## Current integration evidence — 7 October 2026
 
 The [Kit028 source return point](../aosedge-sdv-demo/docs/qualification/kit028-setup042-source-publication-2026-10-05.md)
