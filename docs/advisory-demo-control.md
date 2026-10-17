@@ -9,4 +9,9 @@ The fixed RESET_DEMO_SCENARIO envelope binds Unit, installed release, native fou
 
 A fresh typed CLEAR uses the reset UUID as decision ID. Completion requires correlated Gateway CLEARED; the result is retried through `/api/v1/tire/demo-control/ack`. Duplicate/restart recovery is idempotent; a release/instance change rejects pending authority. Ordinary restart retains product state.
 
-Host tests cover reset/restart, wrong/expired commands, matching acknowledgement, new warnings and retained sequence/history. Live staging and clean Factory qualification remain separate gates.
+Host tests cover reset/restart, wrong/expired commands, matching acknowledgement,
+new warnings and retained sequence/history. The integration
+[current baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/qualification/current-baseline.md)
+binds real independent Reset/history and advisory results to the selected
+runtime. Local tests do not qualify another candidate or close every negative
+and interruption case.

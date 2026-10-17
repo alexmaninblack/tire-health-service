@@ -119,9 +119,9 @@ export. The manifest always states `liveQualified: false`.
 Demo Control consumes only the allowed rootfs leaves during package
 preparation, adds its single allocated package/publication version and the
 accepted Tire service configuration, then owns signing/publication. Product
-compilation is neither publication nor functional acceptance. The operator
-approved the exact raw-feature extraction formulas on 16 September 2026;
-the runtime now applies that model rather than `MODEL_CONTRACT_UNRESOLVED`.
+compilation is neither publication nor functional acceptance. The runtime
+applies the accepted raw-feature extraction formulas and bounded model;
+changing them requires review, not a build-time threshold adjustment.
 
 ## Renewal continuity qualification
 
@@ -137,13 +137,10 @@ Readiness samples its wall clock after acquiring the input mutex, avoiding a
 false future-time comparison against a frame accepted while waiting. The
 future-time and 5000-ms advisory guards are unchanged.
 
-On 3 October 2026 a retained-M1 transient proof at the signed 600-DMIPS
-candidate budget ran for 420.613 seconds without input/advisory NOT_READY
-transitions. A natural token renewal occurred during a Tire episode that
-completed and reached the backend. This bounded proof does not close native
-SOTA, restart, CPU-isolation or complete installed-kit qualification.
-
-This source closure does not qualify live analytics, calibration, readiness
-or resource usage. Actual ARM64 compilation, KAC/TLS,
-subscriptions, renewal, native mounts, recovery and backend records require
-their separately controlled build and live gates.
+The requested CPU envelope is 600 DMIPS. A quota declaration or an isolated
+renewal proof is not a fixed-load isolation or calibration verdict. The
+integration [current baseline](https://github.com/alexmaninblack/aosedge-sdv-demo/blob/main/docs/qualification/current-baseline.md)
+binds the selected executable and installed package to scoped real-input,
+renewal, serial SOTA, advisory, Reset, ignition and offline results. Those
+receipts do not transfer to a new export. Full calibration, CPU-isolation,
+readiness/fault matrices and nonempty-queue power loss remain separate gates.
